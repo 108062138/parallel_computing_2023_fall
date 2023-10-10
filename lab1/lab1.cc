@@ -31,6 +31,7 @@ int main(int argc, char** argv) {
 	
 
 	if(rank==0){
+		//
 		for(int src=1;src<size;src++){
 			unsigned long long rcv_pixel = 0;
 			MPI_Recv(&rcv_pixel,1,MPI_UNSIGNED_LONG_LONG,src,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
@@ -40,17 +41,19 @@ int main(int argc, char** argv) {
 		//handle the rest of the execution
 		//printf("at rank %d, range: [ %d, %d] and r: %d, k:%d, elp: %d\n",rank, element_per_process*(size-1), r-1,r,k, element_per_process);
 		for(unsigned long long x=element_per_process*(size-1);x<r;x++){
-			pixels += ceil(sqrtl(r*r-x*x));
-			pixels %= k;
+			pixels += ceil(sqrtl((r+x)*(r-x)));
+			
 		}
+		pixels %= k;
 		printf("%llu\n", (pixels*4)%k);
 	}else{
 		//printf("at rank %d, range: [ %d, %d] and r: %d, k:%d, elp: %d\n",rank, start_index, end_index,r,k, element_per_process);
 		unsigned long long local_pixel = 0;
 		for(unsigned long long x=start_index;x<=end_index;x++){
-			local_pixel += ceil(sqrtl(r*r-x*x));
-			local_pixel %= k;
+			local_pixel += ceil(sqrtl((r+x)*(r-x)));
+			
 		}
+		local_pixel %= k;
 		MPI_Send(&local_pixel,1, MPI_UNSIGNED_LONG_LONG,0,0,MPI_COMM_WORLD);
 	}
 
