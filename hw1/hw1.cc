@@ -20,6 +20,41 @@ int compare(const void *a, const void *b){
     return 0;
 }
 
+void distribute_portion2(float* data, float* tmp,float* buf, int each_hold, bool take_small_portion){
+    int write_index, data_index, tmp_index;
+    if(take_small_portion){
+        write_index = 0;
+        data_index = 0;
+        tmp_index = 0;
+        while(write_index<each_hold){
+            if(data[data_index] < tmp[tmp_index]){
+                buf[write_index] = data[data_index];
+                data_index++;
+            }else{
+                buf[write_index] = tmp[tmp_index];
+                tmp_index++;
+            }
+            write_index++;
+        }
+    }else{
+        write_index = each_hold-1;
+        data_index = each_hold-1;
+        tmp_index = each_hold-1;
+        while(write_index>=0){
+            if(data[data_index] > tmp[tmp_index]){
+                buf[write_index] = data[data_index];
+                data_index--;
+            }else{
+                buf[write_index] = tmp[tmp_index];
+                tmp_index--;
+            }
+            write_index--;
+        }
+    }
+    for(int i=0;i<each_hold;i++)
+        data[i] = buf[i];
+}
+
 void distribute_portion(float* data, float* tmp, int each_hold, bool take_small_portion){
     int write_index, data_index, tmp_index;
     float* buf = new float[each_hold];
@@ -93,6 +128,7 @@ int main(int argc, char **argv){
 
     float *data = new float[each_hold];
     float *tmp = new float[each_hold];
+    float *buf = new float[each_hold];
 
     MPI_File_open(MPI_COMM_WORLD, input_filename, MPI_MODE_RDONLY, MPI_INFO_NULL, &input_file);
     if(rank!=size-1){// noraml process
@@ -132,7 +168,7 @@ int main(int argc, char **argv){
                                     tmp, each_hold, MPI_FLOAT, 
                                     rank+1, EVEN_PHASE, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                     
-                    distribute_portion(data, tmp, each_hold, true);
+                    distribute_portion2(data, tmp, buf, each_hold, true);
                 }
             }
         }else{
@@ -147,7 +183,7 @@ int main(int argc, char **argv){
                                 tmp, each_hold, MPI_FLOAT, 
                                 rank-1, EVEN_PHASE, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                 // merge data and tmp
-                distribute_portion(data, tmp, each_hold, false);
+                distribute_portion2(data, tmp, buf, each_hold, false);
             }
         }
 
@@ -165,7 +201,7 @@ int main(int argc, char **argv){
                                     tmp, each_hold, MPI_FLOAT, 
                                     rank+1, ODD_PHASE, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                     // merge data and tmp
-                    distribute_portion(data, tmp, each_hold, true);
+                    distribute_portion2(data, tmp, buf, each_hold, true);
                 }
             }
         }else{
@@ -181,7 +217,7 @@ int main(int argc, char **argv){
                                 tmp, each_hold, MPI_FLOAT, 
                                 rank-1, ODD_PHASE, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                 // merge data and tmp
-                distribute_portion(data, tmp, each_hold, false);
+                distribute_portion2(data, tmp, buf, each_hold, false);
             }
         }
     }
@@ -198,6 +234,7 @@ int main(int argc, char **argv){
     // release memory
     delete[] data;
     delete[] tmp;
+    delete[] buf;
     MPI_Finalize();
     return 0;
 }
