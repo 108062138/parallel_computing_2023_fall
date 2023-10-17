@@ -105,7 +105,7 @@ int main(int argc, char **argv){
     char *output_filename = argv[3];
     
     // early stop for single process or small data
-    if(size==1 || total_num_float<=size){
+    if(size==1 || total_num_float<=10000){
         float *data = new float[total_num_float];
         MPI_File input_file, output_file;
         MPI_File_open(MPI_COMM_WORLD, input_filename, MPI_MODE_RDONLY, MPI_INFO_NULL, &input_file);
@@ -151,6 +151,7 @@ int main(int argc, char **argv){
     boost::sort::spreadsort::spreadsort(data, data+each_hold);
     end_time = MPI_Wtime();
     if(rank==0)printf("%lf, ", end_time-start_time);
+    
     // implement odd even sort
     double small_communication_time = 0, large_communication_time = 0, merge_time = 0;
     for(int iteration = 0;iteration<size; iteration = iteration+2){
@@ -167,24 +168,16 @@ int main(int argc, char **argv){
 
         if(rank%2==0){
             if(rank!=size-1){
+                // start large communication
                 start_time = MPI_Wtime();
-                MPI_Sendrecv(   data+each_hold-1, SINGLE_ELEMENT, MPI_FLOAT, 
+                MPI_Sendrecv(   data, each_hold, MPI_FLOAT, 
                                 rank+1, EVEN_PHASE,
-                                tmp, SINGLE_ELEMENT, MPI_FLOAT, 
+                                tmp, each_hold, MPI_FLOAT, 
                                 rank+1, EVEN_PHASE, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                 end_time = MPI_Wtime();
-                if(rank==0)small_communication_time += end_time-start_time;
+                if(rank==0)large_communication_time += end_time-start_time;
 
                 if(data[each_hold-1] > tmp[0]){
-                    // start large communication
-                    start_time = MPI_Wtime();
-                    MPI_Sendrecv(   data, each_hold, MPI_FLOAT, 
-                                    rank+1, EVEN_PHASE,
-                                    tmp, each_hold, MPI_FLOAT, 
-                                    rank+1, EVEN_PHASE, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                    end_time = MPI_Wtime();
-
-                    if(rank==0)large_communication_time += end_time-start_time;
                     start_time = MPI_Wtime();
                     distribute_portion2(data, tmp, buf, each_hold, true);
                     end_time = MPI_Wtime();
@@ -192,22 +185,16 @@ int main(int argc, char **argv){
                 }
             }
         }else{
+            // start large communication
             start_time = MPI_Wtime();
-            MPI_Sendrecv(   data, SINGLE_ELEMENT, MPI_FLOAT, 
+            MPI_Sendrecv(   data, each_hold, MPI_FLOAT, 
                             rank-1, EVEN_PHASE,
-                            tmp+each_hold-1, SINGLE_ELEMENT, MPI_FLOAT, 
+                            tmp, each_hold, MPI_FLOAT, 
                             rank-1, EVEN_PHASE, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             end_time = MPI_Wtime();
-            if(rank==0)small_communication_time += end_time-start_time;
+            if(rank==0)large_communication_time += end_time-start_time;
+
             if(data[0] < tmp[each_hold-1]){
-                // start large communication
-                start_time = MPI_Wtime();
-                MPI_Sendrecv(   data, each_hold, MPI_FLOAT, 
-                                rank-1, EVEN_PHASE,
-                                tmp, each_hold, MPI_FLOAT, 
-                                rank-1, EVEN_PHASE, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                end_time = MPI_Wtime();
-                if(rank==0)large_communication_time += end_time-start_time;
                 // merge data and tmp
                 start_time = MPI_Wtime();
                 distribute_portion2(data, tmp, buf, each_hold, false);
@@ -219,22 +206,15 @@ int main(int argc, char **argv){
         // odd phase. take odd process as left and even process as right: [odd, even]
         if(rank%2==1){
             if(rank!=size-1){
+                // start large communication
                 start_time = MPI_Wtime();
-                MPI_Sendrecv(   data+each_hold-1, SINGLE_ELEMENT, MPI_FLOAT, 
+                MPI_Sendrecv(   data, each_hold, MPI_FLOAT, 
                                 rank+1, ODD_PHASE,
-                                tmp, SINGLE_ELEMENT, MPI_FLOAT, 
+                                tmp, each_hold, MPI_FLOAT, 
                                 rank+1, ODD_PHASE, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                 end_time = MPI_Wtime();
-                if(rank==0)small_communication_time += end_time-start_time;
-                if(data[each_hold-1] > tmp[0]){
-                    // start large communication
-                    start_time = MPI_Wtime();
-                    MPI_Sendrecv(   data, each_hold, MPI_FLOAT, 
-                                    rank+1, ODD_PHASE,
-                                    tmp, each_hold, MPI_FLOAT, 
-                                    rank+1, ODD_PHASE, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                    end_time = MPI_Wtime();
-                    if(rank==0)large_communication_time += end_time-start_time;
+                if(rank==0)large_communication_time += end_time-start_time;
+                if(data[each_hold-1] > tmp[0]){    
                     // merge data and tmp
                     start_time = MPI_Wtime();
                     distribute_portion2(data, tmp, buf, each_hold, true);
@@ -244,14 +224,6 @@ int main(int argc, char **argv){
             }
         }else{
             if (rank==0) continue;
-            start_time = MPI_Wtime();
-            MPI_Sendrecv(   data, SINGLE_ELEMENT, MPI_FLOAT, 
-                            rank-1, ODD_PHASE,
-                            tmp+each_hold-1, SINGLE_ELEMENT, MPI_FLOAT, 
-                            rank-1, ODD_PHASE, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            end_time = MPI_Wtime();
-            if(rank==0)small_communication_time += end_time-start_time;
-            if(data[0] < tmp[each_hold-1]){
                 // start large communication
                 start_time = MPI_Wtime();
                 MPI_Sendrecv(   data, each_hold, MPI_FLOAT, 
@@ -260,12 +232,13 @@ int main(int argc, char **argv){
                                 rank-1, ODD_PHASE, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                 end_time = MPI_Wtime();
                 if(rank==0)large_communication_time += end_time-start_time;
-                // merge data and tmp
-                start_time = MPI_Wtime();
-                distribute_portion2(data, tmp, buf, each_hold, false);
-                end_time = MPI_Wtime();
-                if(rank==0)merge_time += end_time-start_time;
-            }
+                if(data[0] < tmp[each_hold-1]){
+                    // merge data and tmp
+                    start_time = MPI_Wtime();
+                    distribute_portion2(data, tmp, buf, each_hold, false);
+                    end_time = MPI_Wtime();
+                    if(rank==0)merge_time += end_time-start_time;
+                }
         }
     }
     if(rank==0)printf("%lf, %lf, %lf, ", small_communication_time, large_communication_time, merge_time);
@@ -289,4 +262,3 @@ int main(int argc, char **argv){
     MPI_Finalize();
     return 0;
 }
-
