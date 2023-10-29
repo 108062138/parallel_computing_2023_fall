@@ -42,6 +42,7 @@ int main(int argc, char** argv) {
 		//printf("at rank %d, range: [ %d, %d] and r: %d, k:%d, elp: %d\n",rank, element_per_process*(size-1), r-1,r,k, element_per_process);
 		for(unsigned long long x=element_per_process*(size-1);x<r;x++){
 			pixels += ceil(sqrtl((r+x)*(r-x)));
+			
 		}
 		pixels %= k;
 		printf("%llu\n", (pixels*4)%k);
