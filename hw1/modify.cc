@@ -56,7 +56,7 @@ void distribute_portion2(float* data, float* tmp,float* buf, int each_hold, bool
         data[i] = buf[i];
 }
 
-void distribute_portion(float* data, float* tmp, int each_hold, bool take_small_portion){
+void distribute_portion1(float* data, float* tmp, int each_hold, bool take_small_portion){
     int write_index, data_index, tmp_index;
     float* buf = new float[each_hold];
     if(take_small_portion){
