@@ -12,9 +12,9 @@
 #include <pthread.h>
 
 struct data{
-    int lb_i;
-    int rb_i;
-    int j;
+    int lb_j;
+    int rb_j;
+    int i;
     double y0;
 };
 
@@ -25,7 +25,7 @@ int* image;
 void* handle_chunk_col(void* arg){
     struct data* my_data = (struct data*)arg;
     #pragma GCC ivdep
-    for(int i=my_data->lb_i;i<=my_data->rb_i;i++){
+    for(int i=my_data->lb_i;i<my_data->rb_i;i++){
         double x0 = i * ((right - left) / width) + left;
         int repeats = 0;
         double x = 0;
@@ -100,25 +100,20 @@ int main(int argc, char** argv) {
     height = strtol(argv[8], 0, 10);
 
     /* allocate memory for image */
-    image = (int*)malloc(width * height * sizeof(int));
+    image = (int*)calloc(width * height, sizeof(int));
     assert(image);
 
     total_cpu = CPU_COUNT(&cpu_set);
-    element_per_thread = std::ceil((width + CPU_COUNT(&cpu_set) - 1) / CPU_COUNT(&cpu_set));
+    element_per_thread = std::ceil((height + CPU_COUNT(&cpu_set) - 1) / CPU_COUNT(&cpu_set));
     pthread_t my_thread_pool[total_cpu];
     struct data my_data[total_cpu];
 
     /* mandelbrot set */
-    for (int j = 0; j < height; ++j) {
-        double y0 = j * ((upper - lower) / height) + lower;
-        for(int i = 0;i<total_cpu; i++){
-            my_data[i].lb_i = i*element_per_thread;
-            if((i+1)*element_per_thread >= width)
-                my_data[i].rb_i = width-1;
-            else
-                my_data[i].rb_i = (i+1)*element_per_thread -1;
-            my_data[i].j = j;
-            my_data[i].y0 = y0;
+    for(int i = 0;i<total_cpu; i++){
+        double x0 = i * ((right - left) / width) + left;
+        for (int j = 0; j < height; ++j) {
+            
+
             if(pthread_create(&my_thread_pool[i], NULL, handle_chunk_col, &my_data[i])!=0){
                 perror("thread creation failure");
                 return 1;
