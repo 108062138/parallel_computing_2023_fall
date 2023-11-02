@@ -1,6 +1,6 @@
 CC = gcc
 CXX = g++
-LDLIBS = -lpng -march=native -fopt-info-vec-optimized
+LDLIBS = -lpng #-march=native -fopt-info-vec-optimized
 CFLAGS = -lm -O3
 hw2a: CFLAGS += -pthread
 hw2b: CC = mpicc

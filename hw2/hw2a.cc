@@ -6,41 +6,40 @@
 #include <assert.h>
 #include <png.h>
 #include <stdio.h>
-#include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <pthread.h>
+#include <algorithm>
 
 struct data{
-    int lb_j;
-    int rb_j;
+    int low_j;
+    int high_j;
     int i;
-    double y0;
+    double x0;
 };
 
+int iters, width, height, element_per_thread, total_cpu;
 double left, right, lower, upper;
-int width, height, iters, total_cpu, element_per_thread;
 int* image;
 
-void* handle_chunk_col(void* arg){
+void* handle_chunk_row(void* arg){
     struct data* my_data = (struct data*)arg;
-    #pragma GCC ivdep
-    for(int i=my_data->lb_i;i<my_data->rb_i;i++){
-        double x0 = i * ((right - left) / width) + left;
+    for(int k=my_data->low_j;k<my_data->high_j;k++){
+        double y0 = k * ((upper - lower) / height) + lower;
         int repeats = 0;
         double x = 0;
         double y = 0;
         double length_squared = 0;
         while (repeats < iters && length_squared < 4) {
-            double temp = x * x - y * y + x0;
-            y = 2 * x * y + my_data->y0;
+            double temp = x * x - y * y + my_data->x0;
+            y = 2 * x * y + y0;
             x = temp;
             length_squared = x * x + y * y;
             ++repeats;
         }
-        image[my_data->j * width + i] = repeats;
+        image[k * width + my_data->i] = repeats;
     }
-
     return NULL;
 }
 
@@ -90,7 +89,6 @@ int main(int argc, char** argv) {
     /* argument parsing */
     assert(argc == 9);
     const char* filename = argv[1];
-    
     iters = strtol(argv[2], 0, 10);
     left = strtod(argv[3], 0);
     right = strtod(argv[4], 0);
@@ -100,30 +98,94 @@ int main(int argc, char** argv) {
     height = strtol(argv[8], 0, 10);
 
     /* allocate memory for image */
-    image = (int*)calloc(width * height, sizeof(int));
+    image = (int*)malloc(width * height * sizeof(int));
     assert(image);
-
-    total_cpu = CPU_COUNT(&cpu_set);
     element_per_thread = std::ceil((height + CPU_COUNT(&cpu_set) - 1) / CPU_COUNT(&cpu_set));
-    pthread_t my_thread_pool[total_cpu];
+    printf("total length: %d\n", width*height);
+    total_cpu = CPU_COUNT(&cpu_set);
+    pthread_t threads[total_cpu];
     struct data my_data[total_cpu];
-
+    int* prefix_sum = (int*)malloc(height * sizeof(int));
+    int* partition_left = (int*)malloc(total_cpu * sizeof(int));
+    int* partition_right = (int*)malloc(total_cpu * sizeof(int));
     /* mandelbrot set */
-    for(int i = 0;i<total_cpu; i++){
+    for (int i = 0; i < width; ++i) {
         double x0 = i * ((right - left) / width) + left;
-        for (int j = 0; j < height; ++j) {
-            
+        if(i!=0){
+            // calculate the previous column's prefix sum
+            prefix_sum[0] = image[0*width+i-1];
+            for(int j=1;j<height;j++){
+                prefix_sum[j] = prefix_sum[j-1] + image[j*width+i-1];
+            }
+            int current_index = 0, next_index = 0, current_acc = 0, next_acc = 0;
+            int average = prefix_sum[height-1]/total_cpu;
+            for(int j=0;j<total_cpu;j++){
+                if(j==total_cpu-1){
+                    partition_left[j] = current_index;
+                    partition_right[j] = height;
+                }else{
+                    next_acc = current_acc + average;
+                    int* tmp = std::lower_bound(prefix_sum+current_index, prefix_sum+height, next_acc);
+                    next_index = tmp - prefix_sum;
+                    partition_left[j] = current_index;
+                    partition_right[j] = next_index;
 
-            if(pthread_create(&my_thread_pool[i], NULL, handle_chunk_col, &my_data[i])!=0){
-                perror("thread creation failure");
-                return 1;
+                    current_index = next_index;
+                    current_acc = next_acc;
+
+                }
+            }
+            for(int j=0;j<total_cpu;j++){
+                printf("partition %d: %d - %d\n", j, partition_left[j], partition_right[j]);
             }
         }
+        for(int j=0;j<total_cpu;j++){
+            int low_j = j * element_per_thread, high_j;
+            if ((j+1)*element_per_thread >= height)
+                high_j = height;
+            else
+                high_j = (j+1)*element_per_thread;
+            //for(int k=low_j;k<=high_j;k++){
+            //    double y0 = k * ((upper - lower) / height) + lower;
+            //    int repeats = 0;
+            //    double x = 0;
+            //    double y = 0;
+            //    double length_squared = 0;
+            //    while (repeats < iters && length_squared < 4) {
+            //        double temp = x * x - y * y + x0;
+            //        y = 2 * x * y + y0;
+            //        x = temp;
+            //        length_squared = x * x + y * y;
+            //        ++repeats;
+            //    }
+            //    image[k * width + i] = repeats;
+            //}
 
-
-        for(int i=0;i<total_cpu;i++){
-            pthread_join(my_thread_pool[i], NULL);
+            my_data[j].low_j = low_j;
+            my_data[j].high_j = high_j;
+            my_data[j].i = i;
+            my_data[j].x0 = x0;
+            pthread_create(&threads[j], NULL, handle_chunk_row, (void*)&my_data[j]);
         }
+
+        for(int j=0;j<total_cpu;j++)
+            pthread_join(threads[j], NULL);
+
+        //for (int j = 0; j < height; ++j) {
+        //    double y0 = j * ((upper - lower) / height) + lower;
+        //    int repeats = 0;
+        //    double x = 0;
+        //    double y = 0;
+        //    double length_squared = 0;
+        //    while (repeats < iters && length_squared < 4) {
+        //        double temp = x * x - y * y + x0;
+        //        y = 2 * x * y + y0;
+        //        x = temp;
+        //        length_squared = x * x + y * y;
+        //        ++repeats;
+        //    }
+        //    image[j * width + i] = repeats;
+        //}
     }
 
     /* draw and cleanup */
