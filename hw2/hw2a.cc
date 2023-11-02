@@ -135,16 +135,25 @@ int main(int argc, char** argv) {
 
                 }
             }
+            //for(int j=0;j<total_cpu;j++){
+            //    printf("partition %d: %d - %d\n", j, partition_left[j], partition_right[j]);
+            //}
+        }else{
+            // handle 0th column
             for(int j=0;j<total_cpu;j++){
-                printf("partition %d: %d - %d\n", j, partition_left[j], partition_right[j]);
+                partition_left[j] = j * element_per_thread;
+                if((j+1)*element_per_thread >= height)
+                    partition_right[j] = height;
+                else
+                    partition_right[j] = (j+1)*element_per_thread;
             }
         }
         for(int j=0;j<total_cpu;j++){
-            int low_j = j * element_per_thread, high_j;
-            if ((j+1)*element_per_thread >= height)
-                high_j = height;
-            else
-                high_j = (j+1)*element_per_thread;
+            //int low_j = j * element_per_thread, high_j;
+            //if ((j+1)*element_per_thread >= height)
+            //    high_j = height;
+            //else
+            //    high_j = (j+1)*element_per_thread;
             //for(int k=low_j;k<=high_j;k++){
             //    double y0 = k * ((upper - lower) / height) + lower;
             //    int repeats = 0;
@@ -161,8 +170,8 @@ int main(int argc, char** argv) {
             //    image[k * width + i] = repeats;
             //}
 
-            my_data[j].low_j = low_j;
-            my_data[j].high_j = high_j;
+            my_data[j].low_j = partition_left[j];
+            my_data[j].high_j = partition_right[j];
             my_data[j].i = i;
             my_data[j].x0 = x0;
             pthread_create(&threads[j], NULL, handle_chunk_row, (void*)&my_data[j]);
