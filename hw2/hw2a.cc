@@ -11,6 +11,9 @@
 #include <math.h>
 #include <pthread.h>
 #include <algorithm>
+#include <immintrin.h>
+#include <smmintrin.h>
+#include <emmintrin.h>
 
 struct data{
     int low_j;
@@ -135,9 +138,6 @@ int main(int argc, char** argv) {
 
                 }
             }
-            //for(int j=0;j<total_cpu;j++){
-            //    printf("partition %d: %d - %d\n", j, partition_left[j], partition_right[j]);
-            //}
         }else{
             // handle 0th column
             for(int j=0;j<total_cpu;j++){
@@ -149,27 +149,6 @@ int main(int argc, char** argv) {
             }
         }
         for(int j=0;j<total_cpu;j++){
-            //int low_j = j * element_per_thread, high_j;
-            //if ((j+1)*element_per_thread >= height)
-            //    high_j = height;
-            //else
-            //    high_j = (j+1)*element_per_thread;
-            //for(int k=low_j;k<=high_j;k++){
-            //    double y0 = k * ((upper - lower) / height) + lower;
-            //    int repeats = 0;
-            //    double x = 0;
-            //    double y = 0;
-            //    double length_squared = 0;
-            //    while (repeats < iters && length_squared < 4) {
-            //        double temp = x * x - y * y + x0;
-            //        y = 2 * x * y + y0;
-            //        x = temp;
-            //        length_squared = x * x + y * y;
-            //        ++repeats;
-            //    }
-            //    image[k * width + i] = repeats;
-            //}
-
             my_data[j].low_j = partition_left[j];
             my_data[j].high_j = partition_right[j];
             my_data[j].i = i;
@@ -179,22 +158,6 @@ int main(int argc, char** argv) {
 
         for(int j=0;j<total_cpu;j++)
             pthread_join(threads[j], NULL);
-
-        //for (int j = 0; j < height; ++j) {
-        //    double y0 = j * ((upper - lower) / height) + lower;
-        //    int repeats = 0;
-        //    double x = 0;
-        //    double y = 0;
-        //    double length_squared = 0;
-        //    while (repeats < iters && length_squared < 4) {
-        //        double temp = x * x - y * y + x0;
-        //        y = 2 * x * y + y0;
-        //        x = temp;
-        //        length_squared = x * x + y * y;
-        //        ++repeats;
-        //    }
-        //    image[j * width + i] = repeats;
-        //}
     }
 
     /* draw and cleanup */

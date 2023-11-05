@@ -1,9 +1,10 @@
 rm out.png sample.png tmp.png
-make clean
+# make clean
 make
-srun -pjudge -N5 -n10 -c4 ./hw2b out.png 2602 -3 0.2 -3 0.2 979 2355
-srun -pjudge -N5 -n10 -c4 ./hw2seq tmp.png 2602 -3 0.2 -3 0.2 979 2355
+srun -pjudge -N3 -n5 -c4 ./hw2b out.png 2602 -3 0.2 -3 0.2 979 2355
+srun -pjudge -N3 -n5 -c4 ./hw2seq tmp.png 2602 -3 0.2 -3 0.2 979 2355
 diff out.png tmp.png
+
 # srun -n1 -c4 ./hw2a out.png      22 -3 0.2 -3 0.2 4 23
 # srun -n1 -c4 ./hw2seq sample.png 22 -3 0.2 -3 0.2 4 23
 # diff out.png sample.png

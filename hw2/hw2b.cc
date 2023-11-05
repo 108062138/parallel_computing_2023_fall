@@ -168,6 +168,7 @@ int main(int argc, char** argv) {
             for(int j=1;j<size;j++){
                 MPI_Recv(   single_column, height, MPI_INT, j, TRANSFER_PIXEL_TAG,
                             MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                
                 for(int k=my_data[j].low_j;k<my_data[j].high_j;k++){
                     image[k * width + my_data[j].i] = single_column[k];
                 }
@@ -193,7 +194,7 @@ int main(int argc, char** argv) {
                 int lb = received_data.low_j + omp_thread*element_per_thread;
                 int rb = std::min(received_data.high_j, lb + element_per_thread);
                 
-                #pragma omp parallel for
+                #pragma omp parallel for schedule(dynamic)
                 for(int k=lb;k<rb;k++){
                     double y0 = k * ((upper - lower) / height) + lower;
                     int repeats = 0;
