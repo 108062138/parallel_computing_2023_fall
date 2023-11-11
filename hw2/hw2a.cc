@@ -14,6 +14,7 @@
 #include <immintrin.h>
 #include <smmintrin.h>
 #include <emmintrin.h>
+#include <time.h>
 
 struct data{
     int low_j;
@@ -28,22 +29,137 @@ int* image;
 
 void* handle_chunk_row(void* arg){
     struct data* my_data = (struct data*)arg;
-    for(int k=my_data->low_j;k<my_data->high_j;k++){
-        double y0 = k * ((upper - lower) / height) + lower;
-        int repeats = 0;
-        double x = 0;
-        double y = 0;
-        double length_squared = 0;
-        while (repeats < iters && length_squared < 4) {
-            double temp = x * x - y * y + my_data->x0;
-            y = 2 * x * y + y0;
-            x = temp;
-            length_squared = x * x + y * y;
-            ++repeats;
+    //printf("i =  %d,  [%d , %d)\n", my_data->i, my_data->low_j, my_data->high_j);
+    // apply vectorization
+    __m128d y0, x, y, length_squared, temp, four, zero_vector, repeats;
+    __m128d check_iter, check_length, final_check;
+    
+    int k = my_data->low_j;
+    int upper_goto, lower_goto;
+    int total_element = my_data->high_j - my_data->low_j, consume_element = 0;
+    bool init = true;
+    while (total_element > consume_element){
+        // initialize
+        if(init){
+            y0 = _mm_set_pd((k+1) * ((upper - lower) / height) + lower, k * ((upper - lower) / height) + lower);
+            upper_goto = k+1;
+            lower_goto = k;
+            repeats = _mm_set_pd(0, 0);
+            x = _mm_set_pd(0, 0);
+            y = _mm_set_pd(0, 0);
+            length_squared = _mm_set_pd(0, 0);
+            four = _mm_set_pd(4, 4);
+            zero_vector = _mm_set_pd(0, 0);
+            init = false;
+            continue;
         }
-        image[k * width + my_data->i] = repeats;
+
+        // enter while loop, keep consuming elements
+        check_iter = _mm_cmplt_pd(repeats, _mm_set_pd(iters, iters));
+        check_length = _mm_cmplt_pd(length_squared, four);
+        final_check = _mm_and_pd(check_iter, check_length);
+
+        if(_mm_movemask_pd(final_check) == 0x0){
+            // fetch next two elements
+            double arr[2];
+            _mm_store_pd(arr, repeats);
+            if(upper_goto < my_data->high_j){
+                image[upper_goto * width + my_data->i] = (int)arr[1];
+                consume_element++;
+                // print out k, i, repeats, length_squared
+                //printf("k = %d, at %d, repeats = %d, sqr = %lf\n", upper_goto, upper_goto*width + my_data->i, (int)arr[1], _mm_cvtsd_f64(length_squared));
+            }
+            if(lower_goto < my_data->high_j){
+                image[lower_goto * width + my_data->i] = (int)arr[0];
+                consume_element++;
+                // print out k, i, repeats, length_squared
+                //printf("k = %d, at %d, repeats = %d, sqr = %lf\n", lower_goto, lower_goto*width + my_data->i, (int)arr[0], _mm_cvtsd_f64(length_squared));
+            }
+            // find new upper and lower goto
+            int z = std::max(upper_goto, lower_goto);
+            upper_goto = z+2;
+            lower_goto = z+1;
+
+            // initialize
+            y0 = _mm_set_pd(upper_goto*((upper - lower) / height) + lower, lower_goto*((upper - lower) / height) + lower);
+            repeats = _mm_set_pd(0, 0);
+            x = _mm_set_pd(0, 0);
+            y = _mm_set_pd(0, 0);
+            length_squared = _mm_set_pd(0, 0);
+            // may conditially break...
+        }else if(_mm_movemask_pd(final_check) == 0x1){
+            // 01, fetch next one element
+            double arr[2];
+            _mm_store_pd(arr, repeats);
+            // only write the upper one
+            if(upper_goto < my_data->high_j){
+                image[upper_goto * width + my_data->i] = (int)arr[1];
+                consume_element += 1;
+                // print out k, i, repeats, length_squared
+                //printf("k = %d, at %d, repeats = %d, sqr = %lf\n", upper_goto, upper_goto*width + my_data->i, (int)arr[1], _mm_cvtsd_f64(length_squared));
+            }
+            // find new upper
+            upper_goto = std::max(upper_goto, lower_goto) + 1;
+            // partial update e1, for final check == 01
+            // consider x, y, y0, repeats.
+            // keep all their lower part
+            // update upper part of x, y, y0 according to requirement
+            // do nothing on upper part of length_squared
+            // set upper part of repeats to 0
+
+            y0 = _mm_set_pd(upper_goto*((upper - lower) / height) + lower, lower_goto*((upper - lower) / height) + lower);
+            x = _mm_move_sd( zero_vector, x);
+            y = _mm_move_sd( zero_vector, y);
+            repeats = _mm_move_sd(zero_vector, repeats);
+
+        }else if(_mm_movemask_pd(final_check) == 0x2){
+            // 10, fetch next one element
+            double arr[2];
+            _mm_store_pd(arr, repeats);
+            // only write the lower one
+            if(lower_goto < my_data->high_j){
+                image[lower_goto * width + my_data->i] = (int)arr[0];
+                consume_element += 1;
+                // print out k, i, repeats, length_squared
+                //printf("k = %d, at %d, repeats = %d, sqr = %lf\n", lower_goto, lower_goto*width + my_data->i, (int)arr[0], _mm_cvtsd_f64(length_squared));
+            }
+            // find new lower
+            lower_goto = std::max(upper_goto, lower_goto) + 1;
+            // partial update e0, for final check == 10
+            y0 = _mm_set_pd(upper_goto*((upper - lower) / height) + lower, lower_goto*((upper - lower) / height) + lower);
+            x = _mm_move_sd(x, zero_vector);
+            y = _mm_move_sd(y, zero_vector);
+            repeats = _mm_move_sd(repeats, zero_vector);
+        }
+
+        // update
+        temp = _mm_add_pd(_mm_sub_pd(_mm_mul_pd(x, x), _mm_mul_pd(y, y)), _mm_set_pd(my_data->x0, my_data->x0));
+        y = _mm_add_pd(_mm_mul_pd(_mm_mul_pd(_mm_set_pd(2, 2), x), y), y0);
+        x = temp;
+        length_squared = _mm_add_pd(_mm_mul_pd(x, x), _mm_mul_pd(y, y));
+        repeats = _mm_add_pd(repeats, _mm_set_pd(1, 1));
     }
+    
+
     return NULL;
+    
+    //for(int k=my_data->low_j;k<my_data->high_j;k++){
+    //    double y0 = k * ((upper - lower) / height) + lower;
+    //    int repeats = 0;
+    //    double x = 0;
+    //    double y = 0;
+    //    double length_squared = 0;
+    //    while (repeats < iters && length_squared < 4) {
+    //        double temp = x * x - y * y + my_data->x0;
+    //        y = 2 * x * y + y0;
+    //        x = temp;
+    //        length_squared = x * x + y * y;
+    //        ++repeats;
+    //    }
+    //    image[k * width + my_data->i] = repeats;
+    //    printf("k = %d, at %d, repeats = %d, sqr = %lf\n", k, k*width + my_data->i, repeats, length_squared);
+    //}
+    //return NULL;
 }
 
 void write_png(const char* filename, int iters, int width, int height, const int* buffer) {
@@ -86,8 +202,10 @@ void write_png(const char* filename, int iters, int width, int height, const int
 int main(int argc, char** argv) {
     /* detect how many CPUs are available */
     cpu_set_t cpu_set;
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &start);
     sched_getaffinity(0, sizeof(cpu_set), &cpu_set);
-    printf("%d cpus available\n", CPU_COUNT(&cpu_set));
+    //printf("%d cpus available\n", CPU_COUNT(&cpu_set));
 
     /* argument parsing */
     assert(argc == 9);
@@ -104,10 +222,14 @@ int main(int argc, char** argv) {
     image = (int*)malloc(width * height * sizeof(int));
     assert(image);
     element_per_thread = std::ceil((height + CPU_COUNT(&cpu_set) - 1) / CPU_COUNT(&cpu_set));
-    printf("total length: %d\n", width*height);
+    //printf("total length: %d\n", width*height);
     total_cpu = CPU_COUNT(&cpu_set);
     pthread_t threads[total_cpu];
     struct data my_data[total_cpu];
+    
+    float* each_thread_time = (float*)calloc(total_cpu, sizeof(float));
+    struct timespec start_each[total_cpu], end_each[total_cpu];
+
     int* prefix_sum = (int*)malloc(height * sizeof(int));
     int* partition_left = (int*)malloc(total_cpu * sizeof(int));
     int* partition_right = (int*)malloc(total_cpu * sizeof(int));
@@ -153,14 +275,26 @@ int main(int argc, char** argv) {
             my_data[j].high_j = partition_right[j];
             my_data[j].i = i;
             my_data[j].x0 = x0;
+            clock_gettime(CLOCK_MONOTONIC_RAW, &start_each[j]);
             pthread_create(&threads[j], NULL, handle_chunk_row, (void*)&my_data[j]);
         }
 
-        for(int j=0;j<total_cpu;j++)
+        for(int j=0;j<total_cpu;j++){
             pthread_join(threads[j], NULL);
+            clock_gettime(CLOCK_MONOTONIC_RAW, &end_each[j]);
+            each_thread_time[j] += end_each[j].tv_sec - start_each[j].tv_sec + (end_each[j].tv_nsec - start_each[j].tv_nsec)/1000000000.0;
+        }
     }
 
     /* draw and cleanup */
     write_png(filename, iters, width, height, image);
     free(image);
+    free(prefix_sum);
+    free(partition_left);
+    free(partition_right);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+    // printf("time: %lf sec\n", end.tv_sec - start.tv_sec + (end.tv_nsec - start.tv_nsec)/1000000000.0);
+    // for(int i=0;i<total_cpu;i++){
+    //     printf("thread %d time: %lf sec\n", i, each_thread_time[i]);
+    // }
 }

@@ -70,6 +70,8 @@ int main(int argc, char** argv) {
     /* detect how many nodes are available */
     MPI_Init(&argc, &argv);
     int rank, size;
+    double start_time, end_time, cpu_time=0, io_time=0, comm_time=0;
+    
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     //printf("Hello from rank %d of %d\n", rank, size);
@@ -106,6 +108,38 @@ int main(int argc, char** argv) {
     width = strtol(argv[7], 0, 10);
     height = strtol(argv[8], 0, 10);
 
+    if(rank==0 && size==1){
+        image = (int*)malloc(width * height * sizeof(int));
+        start_time = MPI_Wtime();
+        /* mandelbrot set */
+        for (int j = 0; j < height; ++j) {
+            double y0 = j * ((upper - lower) / height) + lower;
+            for (int i = 0; i < width; ++i) {
+                double x0 = i * ((right - left) / width) + left;
+                int repeats = 0;
+                double x = 0;
+                double y = 0;
+                double length_squared = 0;
+                while (repeats < iters && length_squared < 4) {
+                    double temp = x * x - y * y + x0;
+                    y = 2 * x * y + y0;
+                    x = temp;
+                    length_squared = x * x + y * y;
+                    ++repeats;
+                }
+                image[j * width + i] = repeats;
+            }
+        }
+
+        /* draw and cleanup */
+        write_png(filename, iters, width, height, image);
+        free(image);
+        MPI_Finalize();
+        end_time = MPI_Wtime();
+        printf("single node: cpu time: %lf, io time: %lf, comm time: %lf\n", end_time-start_time, 0.0, 0.0);
+        return 0;
+    }
+
     /* allocate memory for image */
     if(rank==0){
         image = (int*)malloc(width * height * sizeof(int));
@@ -122,9 +156,42 @@ int main(int argc, char** argv) {
     /* mandelbrot set */
     for (int i = 0; i < width; ++i) {
         double x0 = i * ((right - left) / width) + left;
+        // early stop for single node
+        if(rank==0 && size==1){
+            printf("single node\n");
+            start_time = MPI_Wtime();
+            #pragma parallel shared(x0, i, image)
+            {
+                int omp_threads = omp_get_num_threads();
+                int omp_thread = omp_get_thread_num();
+                int element_per_thread = std::ceil((height + omp_threads - 1) / omp_threads);
+                int lb = omp_thread*element_per_thread;
+                int rb = std::min(height, lb + element_per_thread);
+                #pragma omp parallel for schedule(dynamic)
+                for(int k=lb;k<rb;k++){
+                    double y0 = k * ((upper - lower) / height) + lower;
+                    int repeats = 0;
+                    double x = 0;
+                    double y = 0;
+                    double length_squared = 0;
+                    while (repeats < iters && length_squared < 4) {
+                        double temp = x * x - y * y + x0;
+                        y = 2 * x * y + y0;
+                        x = temp;
+                        length_squared = x * x + y * y;
+                        ++repeats;
+                    }
+                    image[k * width + i] = repeats;
+                }
+            }
+            end_time = MPI_Wtime();
+            cpu_time += end_time - start_time;
+            continue;
+        }
         // naive split the work
         if(rank==0){
             // first calculate partition left and right
+            start_time = MPI_Wtime();
             if(i==0){//naive partition
                 for(int j=1;j<size;j++){
                     partition_left[j] = (j-1) * element_per_node;
@@ -152,10 +219,12 @@ int main(int argc, char** argv) {
                         current_acc = next_acc;
                     }
                 }
-
             }
+            end_time = MPI_Wtime();
+            cpu_time += end_time - start_time;
             
             // then send data to each node
+            start_time = MPI_Wtime();
             for(int j=1;j<size;j++){
                 my_data[j].low_j = partition_left[j];
                 my_data[j].high_j = partition_right[j];
@@ -173,11 +242,16 @@ int main(int argc, char** argv) {
                     image[k * width + my_data[j].i] = single_column[k];
                 }
             }
+            end_time = MPI_Wtime();
+            comm_time += end_time - start_time;
         }else{
             data received_data;
             // receive data from master
+            start_time = MPI_Wtime();
             MPI_Recv(   &received_data, 1, myDataType, 0, TRANSFER_DATA_TAG,
                         MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            end_time = MPI_Wtime();
+            comm_time += end_time - start_time;
             //printf("at iter %d, under rank %d, received: low_j=%d, high_j=%d, i=%d, x0=%lf\n",
             //    i, rank, received_data.low_j, received_data.high_j, received_data.i, received_data.x0);
             // reset single column as -1
@@ -186,6 +260,7 @@ int main(int argc, char** argv) {
             }
             // perform calculation
             int omp_threads, omp_thread;
+            start_time = MPI_Wtime();
             #pragma parallel shared(received_data, single_column) private(omp_threads, omp_thread)
             {
                 omp_threads = omp_get_num_threads();
@@ -211,31 +286,29 @@ int main(int argc, char** argv) {
                     single_column[k] = repeats;
                 }
             }
+            end_time = MPI_Wtime();
+            cpu_time += end_time - start_time;
 
-            //for(int k=received_data.low_j;k<received_data.high_j;k++){
-            //    double y0 = k * ((upper - lower) / height) + lower;
-            //    int repeats = 0;
-            //    double x = 0;
-            //    double y = 0;
-            //    double length_squared = 0;
-            //    while (repeats < iters && length_squared < 4) {
-            //        double temp = x * x - y * y + received_data.x0;
-            //        y = 2 * x * y + y0;
-            //        x = temp;
-            //        length_squared = x * x + y * y;
-            //        ++repeats;
-            //    }
-            //    single_column[k] = repeats;
-            //}
-            // send back the result
+            start_time = MPI_Wtime();
             MPI_Send(   single_column, height, MPI_INT, 0, TRANSFER_PIXEL_TAG,
                         MPI_COMM_WORLD);
+            end_time = MPI_Wtime();
+            comm_time += end_time - start_time;
         }
     }
 
     /* draw and cleanup */
-    if (rank == 0)
+    if (rank == 0){
+        start_time = MPI_Wtime();
         write_png(filename, iters, width, height, image);
+        end_time = MPI_Wtime();
+        io_time += end_time - start_time;
+    }
+    // printf("rank %d: cpu time: %lf, io time: %lf, comm time: %lf\n", rank, cpu_time, io_time, comm_time);
+        
+    // if (rank == 0)
+    //     printf("rank 0: cpu time: %lf, io time: %lf, comm time: %lf\n", cpu_time, io_time, comm_time);
+    printf("rank %d: cpu time: %lf, io time: %lf, comm time: %lf\n", rank, cpu_time, io_time, comm_time);
     free(image);
     free(prefix_sum);
     free(partition_left);
