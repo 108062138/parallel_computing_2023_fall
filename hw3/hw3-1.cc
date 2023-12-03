@@ -1,16 +1,3 @@
-/*
-先把整個 Matrix 切成比較小的 block。然後每一個在對角線的 block，都有三個步驟 (phases)。
-圖2 上面的二個圖，就是三個 phase 的示意圖。
-圖2上左，是第一個 phase，先計算對角線那個 block（稱為 primary block）。
-接下來第二個 phase(圖2上中)，是計算在和 primary block 同樣 column 和 row 的 blocks。
-第三個 phase，就是計算其餘的 blocks。
-把對角線的的 primary blocks 都重覆以上三步驟，就可以計算出 APSP matrix。三個 phases 的分別解說如下：
-
-第一個 phase，只是一般的 APSP，可以直接用 FW 方法來做。
-第二個 phase，需要用到第一個 phase 算出來的結果：
-第三個 phase，需要用到第二個 phase 所計算出來的 blocks：
-如圖5，白色粗線框起來的地方，是 Phase 3 要計算的一個 block，它需要那兩個黑線粗框的 block 裡的資料才能計算出結果。
-*/
 #include <sched.h>
 #include <iostream>
 #include <pthread.h>
@@ -22,14 +9,14 @@
 #include <iomanip>
 #include <cmath>
 #include <queue>
+#include <omp.h>
 
-#define NO_PATH (1073741823)
-#define B (15)
+#define NO_PATH ((1 << 30) - 1) // 2^30 - 1
+#define B (32)
 using namespace std;
 
 int num_vertices, num_edges, num_blocks, total_threads;
 int** dist;
-bool finish_all_jobs;
 
 typedef struct block_job{
     int row, col;
@@ -100,6 +87,23 @@ int input_parsing(char* file_name){
         dist[src][dst] = weight;
     }
     return 0;
+}
+
+void omp_warshell(){
+    cout << "omp floyd warshell" << endl;
+    // copy the distance matrix
+    for(int k=0; k<num_vertices; k++){
+        #pragma omp parallel for schedule(guided, 16) collapse(2)
+        for(int i=0; i<num_vertices; i++){
+            for(int j=0; j<num_vertices; j++){
+                // invalid case for INT_MAX
+                if(dist[i][j] > dist[i][k]+dist[k][j] && dist[i][k]!=NO_PATH && dist[k][j]!=NO_PATH){
+                    dist[i][j] = dist[i][k]+dist[k][j];
+                }
+            }
+        }
+    }
+    return;
 }
 
 int** basic_floyd_warshell(){
@@ -240,31 +244,34 @@ void block_floyd_warshell(){
         }
 
         // pop out the job and do the calculation
-        while(!job_queue.empty()){
-            // get the job
-            block_job tmp_job = job_queue.front();
-            job_queue.pop();
-
-            //// do the calculation
-            for(int k = target_col; k < target_col+B; k++){
-                for(int i = tmp_job.row; i < tmp_job.row+B; i++){
-                    for(int j = tmp_job.col; j < tmp_job.col+B; j++){
-                        // avoid invalid memory access for the last block
-                        if(i>=num_vertices || j>=num_vertices || k>=num_vertices) continue;
-                        // invalid case for INT_MAX
-                        if(dist[i][k]==NO_PATH || dist[k][j]==NO_PATH) continue;
-                        // update the distance
-                        dist[i][j] = min(dist[i][j], dist[i][k]+dist[k][j]);
+        #pragma omp parallel
+        {
+            while(!job_queue.empty()){
+                // get the job
+                block_job tmp_job;
+                #pragma omp critical
+                {
+                    tmp_job = job_queue.front();
+                    job_queue.pop();
+                }
+                //// do the calculation
+                #pragma omp for
+                for(int k = target_col; k < target_col+B; k++){
+                    for(int i = tmp_job.row; i < tmp_job.row+B; i++){
+                        for(int j = tmp_job.col; j < tmp_job.col+B; j++){
+                            // avoid invalid memory access for the last block
+                            if(i>=num_vertices || j>=num_vertices || k>=num_vertices) continue;
+                            // invalid case for INT_MAX
+                            if(dist[i][k]==NO_PATH || dist[k][j]==NO_PATH) continue;
+                            // update the distance
+                            dist[i][j] = min(dist[i][j], dist[i][k]+dist[k][j]);
+                        }
                     }
                 }
+                
             }
         }
     }
-}
-
-void* tackle_block(void* arg){
-
-    return NULL;
 }
 
 bool check_correctness(int** tmp_dist){
@@ -279,32 +286,54 @@ bool check_correctness(int** tmp_dist){
     return true;
 }
 
+int write_back(char* output_file_name){
+    ofstream output_file(output_file_name, std::ios::binary);
+    if(!output_file.is_open()) {
+        std::cerr << "Error opening file: " << output_file_name << std::endl;
+        return -1;
+    }
+    // write the distance matrix
+    // parallel output write
+    for(int i=0; i<num_vertices; i++){
+        for(int j=0; j<num_vertices; j++){
+            output_file.write(reinterpret_cast<const char*>(&dist[i][j]), sizeof(int));
+        }
+    }
+    output_file.close();
+    return 0;
+}
+
 int main(int argc, char* argv[]){
     char* input_file_name = argv[1];
     char* output_file_name = argv[2];
-
+    double total_time, read_time, write_time, compute_time;
+    double start_time, end_time;
+    // count read time
+    start_time = omp_get_wtime();
+    
     assert(input_parsing(input_file_name)==0);
-    num_blocks = static_cast<int>(std::ceil(static_cast<double>(num_vertices) / B));
-    show_basic_stat();
-    // cout << "original matrix" << endl;
-    // edge_disp(dist);
-    // cout << endl;
-    int** tmp_dist = basic_floyd_warshell();
-    // cout << "basic floyd warshell" << endl;
-    // edge_disp(tmp_dist);
-    // cout << endl;
+    
+    end_time = omp_get_wtime();
+    read_time = end_time - start_time;
 
-    finish_all_jobs = false;
-    cpu_set_t cpuset;
-    sched_getaffinity(0, sizeof(cpuset), &cpuset);
-    total_threads = CPU_COUNT(&cpuset);
-    pthread_t threads[total_threads];
-    for(int i=0; i<total_threads;i++)
-        pthread_create(&threads[i], NULL, tackle_block, NULL);
-    block_floyd_warshell();
-    // cout << "block floyd warshell" << endl;
-    // edge_disp(dist);
-    // cout << endl;
-    cout << "correctness: " << check_correctness(tmp_dist) << endl;
+    num_blocks = static_cast<int>(std::ceil(static_cast<double>(num_vertices) / B));
+    //block_floyd_warshell();
+    // count the time
+    start_time = omp_get_wtime();
+    
+    omp_warshell();
+    
+    end_time = omp_get_wtime();
+    compute_time = end_time - start_time;
+    // count write time
+    start_time = omp_get_wtime();
+    
+    assert(write_back(output_file_name)==0);
+    
+    end_time = omp_get_wtime();
+    write_time = end_time - start_time;
+    total_time = read_time + compute_time + write_time;
+    cout << "total time: " << total_time << endl;
+    cout << "read time: " << read_time << " compute time: " << compute_time << " write time: " << write_time << endl;
     return 0;
 }

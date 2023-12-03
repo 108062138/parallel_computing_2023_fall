@@ -1,14 +1,12 @@
+TARGETS = hw3-1
 CC = gcc
-CXX = clang++
-LDLIBS = -lpng
-CFLAGS = -lm -O3
-floyd_warshell: CFLAGS += -pthread -lrt
+CXX = g++
+CFLAGS = -O3 -lm -fopenmp
+CXXFLAGS = -O3 -lm -fopenmp
 
-CXXFLAGS = $(CFLAGS)
-TARGETS =  floyd_warshell
 .PHONY: all
 all: $(TARGETS)
 
 .PHONY: clean
 clean:
-	rm -f $(TARGETS) $(TARGETS:=.o)
+	rm -f $(TARGETS)
