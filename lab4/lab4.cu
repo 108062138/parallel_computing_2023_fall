@@ -12,7 +12,7 @@
 #define yBound Y / 2
 #define SCALE 8
 #define BLOCK_X_DIM 512
-#define BLOCK_Y_DIM 1
+#define BLOCK_Y_DIM 3
 #define TILE_X_DIM (2+BLOCK_X_DIM+2)
 #define TILE_Y_DIM 1
 
@@ -108,10 +108,8 @@ inline __device__ int bound_check(int val, int lower, int upper) {
 __global__ void sobel(unsigned char *s, unsigned char *t, unsigned height, unsigned width, unsigned channels) {
     extern __shared__ unsigned char shared[];
     int x = blockIdx.x * blockDim.x + threadIdx.x; // true position
-    int y = blockIdx.y; // true position
-    if(!bound_check(x, 0, width)) return;
-
-    float val[Z][3];
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if(!bound_check(x, 0, width) || !bound_check(y, 0, height)) return;
 
     // start load shared memory
     // special case for first thread and last thread
@@ -163,6 +161,8 @@ __global__ void sobel(unsigned char *s, unsigned char *t, unsigned height, unsig
 
     //computing
     /* Z axis of mask */
+    float val[Z][3];
+    int level = 
     for (int i = 0; i < Z; ++i) {
         val[i][2] = 0.f;
         val[i][1] = 0.f;
@@ -226,7 +226,7 @@ int main(int argc, char **argv) {
     dim3 block_size(BLOCK_X_DIM, BLOCK_Y_DIM);
     dim3 grid_size((width + BLOCK_X_DIM -1) / BLOCK_X_DIM, (height + BLOCK_Y_DIM - 1) / BLOCK_Y_DIM);
     // launch cuda kernel
-    sobel << <grid_size, block_size, TILE_X_DIM * Y * channels>>> (dsrc, ddst, height, width, channels);
+    sobel << <grid_size, block_size, TILE_X_DIM * (Y + BLOCK_Y_DIM - 1) * channels>>> (dsrc, ddst, height, width, channels);
 
     // cudaMemcpy(...) copy result image to host
     cudaMemcpy(dst, ddst, height * width * channels * sizeof(unsigned char), cudaMemcpyDeviceToHost);
