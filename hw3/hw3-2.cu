@@ -70,12 +70,11 @@ void output(char* output_file) {
     fclose(outfile);
 }
 
-
 __global__ void phase_1(int* d_dist, int padded_num_vertex, int round){
     int glb_block_i = round;
     int glb_block_j = round;
     int in_block_i = threadIdx.y;
-    int in_block_j = threadIdx.x *4;
+    int in_block_j = threadIdx.x * THREAD_LOAD_SAVE_NUM;
     // load gloval data into my basic block's share memory
     extern __shared__ int share_target[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
     for(int id = 0; id < THREAD_LOAD_SAVE_NUM; id++){
@@ -86,7 +85,9 @@ __global__ void phase_1(int* d_dist, int padded_num_vertex, int round){
     for(int k=0;k<BLOCKED_SQUARE_SIZE;k++){
         for(int id = 0; id<THREAD_LOAD_SAVE_NUM; id++){
             //new from in_block_i to in_block_j+id          old from in_block_i to in_block_j+id                    from  in_block_i to k, from k to in_block_j+id
-            share_target[in_block_i][in_block_j + id] = min(share_target[in_block_i][in_block_j + id], share_target[in_block_i][k] + share_target[k][in_block_j + id]);
+            share_target[in_block_i][in_block_j + id] = min(
+                share_target[in_block_i][in_block_j + id],
+                share_target[in_block_i][k] + share_target[k][in_block_j + id]);
         }
         // there are dependence inbetween k at phase 1
         __syncthreads();
@@ -96,11 +97,80 @@ __global__ void phase_1(int* d_dist, int padded_num_vertex, int round){
         d_dist[(glb_block_i*BLOCKED_SQUARE_SIZE+in_block_i) * padded_num_vertex + (glb_block_j * BLOCKED_SQUARE_SIZE + in_block_j) + id] = share_target[in_block_i][in_block_j + id];
     }
 }
-__global__ void phase_2(int* d_dist, int padded_num_vertex, int round){
+__global__ void phase_2_same_row(int* d_dist, int padded_num_vertex, int round){
+    // for now, only ha
+    if(round == blockIdx.x) return;
+    int glb_block_i = round;
+    int glb_block_j = blockIdx.x;
+    int in_block_i = threadIdx.y;
+    int in_block_j = threadIdx.x * THREAD_LOAD_SAVE_NUM;
 
+    // load data
+    extern __shared__ int from[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
+    extern __shared__ int to[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
+    for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
+        from[in_block_i][in_block_j+id] = d_dist[(glb_block_i*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (glb_block_j*BLOCKED_SQUARE_SIZE + in_block_j) + id];
+        to[in_block_i][in_block_j+id]   = d_dist[(round*BLOCKED_SQUARE_SIZE+in_block_i)* padded_num_vertex + (round*BLOCKED_SQUARE_SIZE+in_block_j) + id];
+    }
+    __syncthreads();
+
+    // cal
+    for(int k=0;k<BLOCKED_SQUARE_SIZE;k++){
+        for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
+            from[in_block_i][in_block_j+id] = min(
+                from[in_block_i][in_block_j+id],
+                to[in_block_i][k] + from[k][in_block_j+id]
+            );
+        }
+        __syncthreads();
+    }
+
+    for(int id=0;id < THREAD_LOAD_SAVE_NUM;id++){
+        d_dist[(glb_block_i*BLOCKED_SQUARE_SIZE + in_block_i) * padded_num_vertex + (glb_block_j*BLOCKED_SQUARE_SIZE+in_block_j) + id] = from[in_block_i][in_block_j+id];
+    }
+}
+__global__ void phase_2_same_col(int* d_dist, int padded_num_vertex, int round){
+    if(round == blockIdx.x) return;
+    int glb_block_i = blockIdx.x;
+    int glb_block_j = round;
+    int in_block_i = threadIdx.y;
+    int in_block_j = threadIdx.x * THREAD_LOAD_SAVE_NUM;
+    // load data
+    extern __shared__ int from[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
+    extern __shared__ int to[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
+    for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
+        from[in_block_i][in_block_j+id]   = d_dist[(glb_block_i*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex+(glb_block_j*BLOCKED_SQUARE_SIZE+in_block_j) + id];
+        to[in_block_i][in_block_j+id] = d_dist[(round*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (round*BLOCKED_SQUARE_SIZE+in_block_j)+ id];
+    }
+    __syncthreads();
+    
+    for(int k=0;k<BLOCKED_SQUARE_SIZE;k++){
+        for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
+            from[in_block_i][in_block_j+id] = min(
+                from[in_block_i][in_block_j+id],
+                from[in_block_i][k] + to[k][in_block_j+id]
+            );
+        }
+        __syncthreads();
+    }
+    for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
+        d_dist[(glb_block_i*BLOCKED_SQUARE_SIZE + in_block_i) * padded_num_vertex + (glb_block_j*BLOCKED_SQUARE_SIZE+in_block_j) + id] = from[in_block_i][in_block_j+id];
+    }
 }
 __global__ void phase_3(int* d_dist, int padded_num_vertex, int round){
+    if(round == blockIdx.x || round == blockIdx.y) return;
+    int glb_block_i = blockIdx.y;
+    int glb_block_j = blockIdx.x;
+    int in_block_i = threadIdx.y;
+    int in_block_j = threadIdx.x * THREAD_LOAD_SAVE_NUM;
 
+    // load data
+    extern __shared__ int from[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
+    extern __shared__ int to[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
+    for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
+        
+    }
+    __syncthreads();
 }
 
 void blocked_floyd_warshell(bool debug, bool check_phase[4]){
@@ -135,14 +205,15 @@ void blocked_floyd_warshell(bool debug, bool check_phase[4]){
     cudaMalloc(&d_dist, padded_num_vertex * padded_num_vertex * sizeof(int));
     // copy dist from host to device
     cudaMemcpy(d_dist, dist, padded_num_vertex * padded_num_vertex * sizeof(int), cudaMemcpyHostToDevice);
-    cout << "num_block_square_row: " << num_blocked_square_row << endl;
+    cout << "num_blocked_square_row: " << num_blocked_square_row << endl;
     for(int round = 0; round< num_blocked_square_row; round++){
         cout << "round: " << round << endl;
         // three phases:
         // phase 1: dependent block, should be thread sync at the level of k
         phase_1 <<< phase_1_grid, basic_block>>> (d_dist, padded_num_vertex, round);
         // // phase 2: dependent block, should be thread sync at the level of k 
-        // if(check_phase[2]) phase_2 <<< phase_2_grid, basic_block>>> (d_dist, padded_num_vertex, round);
+        phase_2_same_row <<< phase_2_grid, basic_block>>> (d_dist, padded_num_vertex, round);
+        phase_2_same_col <<< phase_2_grid, basic_block>>> (d_dist, padded_num_vertex, round);
         // // phase 3: independent block, any place is ok
         // if(check_phase[3]) phase_3 <<< phase_3_grid, basic_block>>> (d_dist, padded_num_vertex, round);
     }
@@ -176,20 +247,49 @@ void check(char* o_file){
         for(int k=0;k<BLOCKED_SQUARE_SIZE;k++){
             for(int in_block_i = 0; in_block_i<BLOCKED_SQUARE_SIZE; in_block_i++){
                 for(int in_block_j=0;in_block_j<BLOCKED_SQUARE_SIZE;in_block_j++){
-                    int a = rem_orig_dist[(round*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (round*BLOCKED_SQUARE_SIZE+in_block_j)];
-                    int b = rem_orig_dist[(round*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (round*BLOCKED_SQUARE_SIZE+k)];
-                    int c = rem_orig_dist[(round*BLOCKED_SQUARE_SIZE+k         )*padded_num_vertex + (round*BLOCKED_SQUARE_SIZE+in_block_j)];
+                    int a, b, c;
+                    a = rem_orig_dist[(round*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (round*BLOCKED_SQUARE_SIZE+in_block_j)];
+                    b = rem_orig_dist[(round*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (round*BLOCKED_SQUARE_SIZE+k)];
+                    c = rem_orig_dist[(round*BLOCKED_SQUARE_SIZE+k         )*padded_num_vertex + (round*BLOCKED_SQUARE_SIZE+in_block_j)];
+
                     rem_orig_dist[(round*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (round*BLOCKED_SQUARE_SIZE+in_block_j)] = min(a, b+c);
                 }
             }
         }
+        
+        // phase 2: dependent block, should be thread sync at the level of k
+        for(int k=0;k<BLOCKED_SQUARE_SIZE;k++){
+            for(int at=0;at<num_blocked_square_row;at++){
+                if(at==round) continue;
+                for(int in_block_i=0;in_block_i<BLOCKED_SQUARE_SIZE;in_block_i++){
+                    for(int in_block_j=0;in_block_j<BLOCKED_SQUARE_SIZE;in_block_j++){
+                        int a, b, c;
+                        // same row first
+                        a = rem_orig_dist[(round*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (at*BLOCKED_SQUARE_SIZE+in_block_j)];
+
+                        b = rem_orig_dist[(round*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (round*BLOCKED_SQUARE_SIZE+k)];
+                        c = rem_orig_dist[(round*BLOCKED_SQUARE_SIZE+k         )*padded_num_vertex + (at*BLOCKED_SQUARE_SIZE+in_block_j)];
+
+                        rem_orig_dist[(round*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (at*BLOCKED_SQUARE_SIZE+in_block_j)] = min(a, b+c);
+                        // same col
+                        a = rem_orig_dist[(at*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (round*BLOCKED_SQUARE_SIZE+in_block_j)];
+
+                        b = rem_orig_dist[(at*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (round*BLOCKED_SQUARE_SIZE+k)];
+                        c = rem_orig_dist[(round*BLOCKED_SQUARE_SIZE+k)*padded_num_vertex       + (round*BLOCKED_SQUARE_SIZE+in_block_j)];
+
+                        rem_orig_dist[(at*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (round*BLOCKED_SQUARE_SIZE+in_block_j)] = min(a, b+c);
+                    }
+                }
+            }
+        }
     }
+    bool same= true;
+    cout << endl << "after phase2" << endl;
     for (int i = 0; i < num_vertex; i++) {
         for (int j = 0; j < num_vertex; j++) {
             int a = rem_orig_dist[i*padded_num_vertex + j];
             if(a!=dist[i*num_vertex+j]){
-                cout << "fuck up================" << endl;
-                return;
+                same = false;
             }
             if (a != NOT_REACHABLE)
                 cout << setw(maxWidth + 1) << a;
@@ -198,7 +298,10 @@ void check(char* o_file){
         }
         cout << endl;
     }
-    cout << "sound safe~~" << endl;
+    if(same)
+        cout << "sound safe~~" << endl;
+    else
+        cout << "fail QQ" << endl;
 }
 
 int main(int argc, char* argv[]){
@@ -212,7 +315,7 @@ int main(int argc, char* argv[]){
     input(input_file);
     // blocked floyd-warshall
     for(int i=0;i<4;i++) check_phase[i] =false;
-    check_phase[1] = true;
+    check_phase[1] = true; check_phase[2] = true;
     blocked_floyd_warshell(debug_flag, check_phase);
     // output file
     output(output_file);
