@@ -8,7 +8,7 @@
 
 
 #define NOT_REACHABLE         (1073741823)
-#define BASIC_WARP            (4) // 32
+#define BASIC_WARP            (16) // 32
 #define COALESCED_FACTOR      (BASIC_WARP*4)
 #define BLOCKED_SQUARE_SIZE   (BASIC_WARP*2)
 // change this to change thread setting
@@ -28,11 +28,6 @@ int *rem_orig_dist;
 
 void input(char* input_file) {
     FILE* file = fopen(input_file, "rb");
-    // check open file
-    if (file == NULL) {
-        fprintf(stderr, "Error: Cannot open file %s\n", input_file);
-        exit(1);
-    }
     fread(&num_vertex, sizeof(int), 1, file);
     fread(&num_edge, sizeof(int), 1, file);
     // pad the matrix to fit COALESCED_FACTOR
@@ -163,17 +158,32 @@ __global__ void phase_3(int* d_dist, int padded_num_vertex, int round){
     int glb_block_j = blockIdx.x;
     int in_block_i = threadIdx.y;
     int in_block_j = threadIdx.x * THREAD_LOAD_SAVE_NUM;
-
-    // load data
+    int arr[THREAD_LOAD_SAVE_NUM];
     extern __shared__ int from[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
     extern __shared__ int to[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
+    // init arr
     for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
-        
+        arr[id] = d_dist[(glb_block_i*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (glb_block_j*BLOCKED_SQUARE_SIZE+in_block_j) + id];
+    }
+    // load value
+    for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
+        from[in_block_i][in_block_j+id] = d_dist[(round*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex+(glb_block_j*BLOCKED_SQUARE_SIZE + in_block_j) + id];
+        to[in_block_i][in_block_j+id] = d_dist[(glb_block_i*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex+(round*BLOCKED_SQUARE_SIZE + in_block_j) + id];
     }
     __syncthreads();
+    for(int k=0;k<BLOCKED_SQUARE_SIZE;k++){
+        for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
+            arr[id] = min(
+                arr[id],
+                to[in_block_i][k]+from[k][in_block_j+id]);
+        }
+    }
+    for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
+        d_dist[(glb_block_i*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (glb_block_j*BLOCKED_SQUARE_SIZE+in_block_j) + id] = arr[id];
+    }
 }
 
-void blocked_floyd_warshell(bool debug, bool check_phase[4]){
+void blocked_floyd_warshell(){
     // partition the matrix into blocks
     // each block is BLOCKED_SQUARE_SIZE * BLOCKED_SQUARE_SIZE
     // each block is stored in row-major order
@@ -186,19 +196,6 @@ void blocked_floyd_warshell(bool debug, bool check_phase[4]){
     dim3 phase_1_grid(1);
     dim3 phase_2_grid(num_blocked_square_row);
     dim3 phase_3_grid(num_blocked_square_row, num_blocked_square_row);
-    if(debug){
-        // show num_vertex, num_edge, num_blocked_square_row, padded_num_vertex
-        cout << "======vertex info=============================================="<< endl;
-        cout << "num_vertex: " << num_vertex << " ,num_edge: " << num_edge << endl;
-        cout << "num_blocked_square_row: " << num_blocked_square_row << " ,padded_num_vertex: " << padded_num_vertex << endl;
-        cout << "======grid and block info======================================" << endl;
-        cout << "num_blocked_square_row: " << num_blocked_square_row << endl;
-        cout << "basic_block.x: " << basic_block.x << " ,basic_block.y: " << basic_block.y << endl;
-        cout << "phase_1_grid.x: " << phase_1_grid.x << " ,phase_1_grid.y: " << phase_1_grid.y << endl;
-        cout << "phase_2_grid.x: " << phase_2_grid.x << " ,phase_2_grid.y: " << phase_2_grid.y << endl;
-        cout << "phase_3_grid.x: " << phase_3_grid.x << " ,phase_3_grid.y: " << phase_3_grid.y << endl;
-        return;
-    }
     
     // allocate memory for dist in device
     int* d_dist;
@@ -215,10 +212,24 @@ void blocked_floyd_warshell(bool debug, bool check_phase[4]){
         phase_2_same_row <<< phase_2_grid, basic_block>>> (d_dist, padded_num_vertex, round);
         phase_2_same_col <<< phase_2_grid, basic_block>>> (d_dist, padded_num_vertex, round);
         // // phase 3: independent block, any place is ok
-        // if(check_phase[3]) phase_3 <<< phase_3_grid, basic_block>>> (d_dist, padded_num_vertex, round);
+        phase_3 <<< phase_3_grid, basic_block>>> (d_dist, padded_num_vertex, round);
     }
     // copy dist from device to host
     cudaMemcpy(dist, d_dist, padded_num_vertex * padded_num_vertex * sizeof(int), cudaMemcpyDeviceToHost);
+}
+
+int main(int argc, char* argv[]){
+    assert(argc == 3);
+    maxWidth = 5;
+    char* input_file = argv[1];
+    char* output_file = argv[2];
+    // parse input file
+    input(input_file);
+    // blocked floyd-warshall
+    blocked_floyd_warshell();
+    // output file
+    output(output_file);
+    return 0;
 }
 
 void check(char* o_file){
@@ -282,9 +293,25 @@ void check(char* o_file){
                 }
             }
         }
+        // // phase 3:
+        // for(int k=0;k<BLOCKED_SQUARE_SIZE;k++){
+        //     for(int glb_block_i=0;glb_block_i<num_blocked_square_row;glb_block_i++){
+        //         for(int glb_block_j=0;glb_block_j<num_blocked_square_row;glb_block_j++){
+        //             if(glb_block_i==round || glb_block_j==round) continue;
+        //             for(int in_block_i =0;in_block_i<BLOCKED_SQUARE_SIZE;in_block_i++){
+        //                 for(int in_block_j=0;in_block_j<BLOCKED_SQUARE_SIZE;in_block_j++){
+        //                     int a, b, c;
+        //                     a = rem_orig_dist[(glb_block_i*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex+(glb_block_j*BLOCKED_SQUARE_SIZE+in_block_j)];
+        //                     b = rem_orig_dist[(round*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex+(k*BLOCKED_SQUARE_SIZE+in_block_j)];
+        //                     c = rem_orig_dist[(k*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (*BLOCKED_SQUARE_SIZE+in_block_j)];
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
     }
     bool same= true;
-    cout << endl << "after phase2" << endl;
+    cout << endl << "after phase3" << endl;
     for (int i = 0; i < num_vertex; i++) {
         for (int j = 0; j < num_vertex; j++) {
             int a = rem_orig_dist[i*padded_num_vertex + j];
@@ -302,24 +329,4 @@ void check(char* o_file){
         cout << "sound safe~~" << endl;
     else
         cout << "fail QQ" << endl;
-}
-
-int main(int argc, char* argv[]){
-    assert(argc == 3);
-    maxWidth = 5;
-    bool debug_flag = false;
-    bool check_phase[4];
-    char* input_file = argv[1];
-    char* output_file = argv[2];
-    // parse input file
-    input(input_file);
-    // blocked floyd-warshall
-    for(int i=0;i<4;i++) check_phase[i] =false;
-    check_phase[1] = true; check_phase[2] = true;
-    blocked_floyd_warshell(debug_flag, check_phase);
-    // output file
-    output(output_file);
-    // check
-    check(output_file);
-    return 0;
 }
