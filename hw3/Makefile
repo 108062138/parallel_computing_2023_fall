@@ -1,6 +1,6 @@
 CC = mpicc
-CXX = mpicxx
-CXXFLAGS = -std=c++17 -O3 -lm -pthread -fopenmp
+CXX = g++
+CXXFLAGS = -std=c++17 -O3 -lm -fopenmp
 CFLAGS = -O3
 NVCCFLAGS = -O3 -std=c++11 -Xptxas=-v -arch=sm_61 -use_fast_math
 NVCC = nvcc
@@ -12,7 +12,7 @@ SOURCES = hw3-1.cc
 .PHONY: all
 all: $(TARGETS)
 
-lab2_pthread: lab2_pthread.cc
+lab2_pthread: hw3-1.cc
 	$(CXX) $(CXXFLAGS) $^ -o $@
 
 %: %.cu
