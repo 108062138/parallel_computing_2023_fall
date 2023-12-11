@@ -110,6 +110,7 @@ __global__ void phase_2_fuse(int* d_dist, int padded_num_vertex, int round){
     extern __shared__ int from_same_col[BLOCKED_SQUARE_SIZE*BLOCKED_SQUARE_SIZE];
     extern __shared__ int to_phase_2[BLOCKED_SQUARE_SIZE*BLOCKED_SQUARE_SIZE];
 
+    #pragma unroll 4
     for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
         from_same_row[in_block_i*BLOCKED_SQUARE_SIZE + in_block_j+id] = d_dist[(glb_b_i_same_row*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (glb_b_j_same_row*BLOCKED_SQUARE_SIZE + in_block_j) + id];
         from_same_col[in_block_i*BLOCKED_SQUARE_SIZE + in_block_j+id] = d_dist[(glb_b_i_same_col*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex+(glb_b_j_same_col*BLOCKED_SQUARE_SIZE+in_block_j) + id];
@@ -196,7 +197,7 @@ void blocked_floyd_warshell(){
     for(int round = 0; round< num_blocked_square_row; round++){
         // three phases:
         // phase 1: dependent block, should be thread sync at the level of k
-        phase_1 <<< phase_1_grid, basic_block, BLOCKED_SQUARE_SIZE*BLOCKED_SQUARE_SIZE>>> (d_dist, padded_num_vertex, round);
+        phase_1 <<< phase_1_grid, basic_block, BLOCKED_SQUARE_SIZE*BLOCKED_SQUARE_SIZE*1>>> (d_dist, padded_num_vertex, round);
         // // phase 2: dependent block, should be thread sync at the level of k 
         //phase_2_same_row <<< phase_2_grid, basic_block>>> (d_dist, padded_num_vertex, round);
         //phase_2_same_col <<< phase_2_grid, basic_block>>> (d_dist, padded_num_vertex, round);
