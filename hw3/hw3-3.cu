@@ -5,18 +5,19 @@
 #include <math.h>
 #include <iomanip>  // for std::setw
 #include <cstdio>   // for fread
+#include <omp.h>
 
 
 #define NOT_REACHABLE         (1073741823)
 #define BASIC_WARP            (32)
 #define COALESCED_FACTOR      (BASIC_WARP*4)
-#define BLOCKED_SQUARE_SIZE   (BASIC_WARP*2)
+#define BLOCKING_FACTOR   (BASIC_WARP*2)
 // change this to change thread setting
 #define THREAD_XY_INTERACTION (2)
 // THREAD_X_DIM * THREAD_Y_DIM = 1024
 #define THREAD_X_DIM          (BASIC_WARP/THREAD_XY_INTERACTION)
 #define THREAD_Y_DIM          (BASIC_WARP*THREAD_XY_INTERACTION)
-#define THREAD_LOAD_SAVE_NUM  (BLOCKED_SQUARE_SIZE/THREAD_X_DIM)
+#define THREAD_LOAD_SAVE_NUM  (BLOCKING_FACTOR/THREAD_X_DIM)
 
 using namespace std;
 
@@ -71,14 +72,14 @@ __global__ void phase_1(int* d_dist, int padded_num_vertex, int round){
     int in_block_i = threadIdx.y;
     int in_block_j = threadIdx.x * THREAD_LOAD_SAVE_NUM;
     // load gloval data into my basic block's share memory
-    extern __shared__ int share_target[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
+    extern __shared__ int share_target[BLOCKING_FACTOR][BLOCKING_FACTOR];
     #pragma unroll 4
     for(int id = 0; id < THREAD_LOAD_SAVE_NUM; id++){
-        share_target[in_block_i][in_block_j + id] =  d_dist[(glb_block_i*BLOCKED_SQUARE_SIZE+in_block_i) * padded_num_vertex + (glb_block_j * BLOCKED_SQUARE_SIZE + in_block_j) + id];
+        share_target[in_block_i][in_block_j + id] =  d_dist[(glb_block_i*BLOCKING_FACTOR+in_block_i) * padded_num_vertex + (glb_block_j * BLOCKING_FACTOR + in_block_j) + id];
     }
     __syncthreads();
     // start computing and enumerate k
-    for(int k=0;k<BLOCKED_SQUARE_SIZE;k++){
+    for(int k=0;k<BLOCKING_FACTOR;k++){
         #pragma unroll 4
         for(int id = 0; id<THREAD_LOAD_SAVE_NUM; id++){
             //new from in_block_i to in_block_j+id          old from in_block_i to in_block_j+id                    from  in_block_i to k, from k to in_block_j+id
@@ -92,7 +93,7 @@ __global__ void phase_1(int* d_dist, int padded_num_vertex, int round){
     // write back
     #pragma unroll 4
     for(int id = 0; id < THREAD_LOAD_SAVE_NUM; id++){
-        d_dist[(glb_block_i*BLOCKED_SQUARE_SIZE+in_block_i) * padded_num_vertex + (glb_block_j * BLOCKED_SQUARE_SIZE + in_block_j) + id] = share_target[in_block_i][in_block_j + id];
+        d_dist[(glb_block_i*BLOCKING_FACTOR+in_block_i) * padded_num_vertex + (glb_block_j * BLOCKING_FACTOR + in_block_j) + id] = share_target[in_block_i][in_block_j + id];
     }
 }
 
@@ -106,17 +107,17 @@ __global__ void phase_2_fuse(int* d_dist, int padded_num_vertex, int round){
     int in_block_j = threadIdx.x * THREAD_LOAD_SAVE_NUM;
 
     // load data
-    extern __shared__ int from_same_row[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
-    extern __shared__ int from_same_col[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
-    extern __shared__ int to[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
+    extern __shared__ int from_same_row[BLOCKING_FACTOR][BLOCKING_FACTOR];
+    extern __shared__ int from_same_col[BLOCKING_FACTOR][BLOCKING_FACTOR];
+    extern __shared__ int to[BLOCKING_FACTOR][BLOCKING_FACTOR];
 
     for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
-        from_same_row[in_block_i][in_block_j+id] = d_dist[(glb_b_i_same_row*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (glb_b_j_same_row*BLOCKED_SQUARE_SIZE + in_block_j) + id];
-        from_same_col[in_block_i][in_block_j+id] = d_dist[(glb_b_i_same_col*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex+(glb_b_j_same_col*BLOCKED_SQUARE_SIZE+in_block_j) + id];
-        to[in_block_i][in_block_j+id]   = d_dist[(round*BLOCKED_SQUARE_SIZE+in_block_i)* padded_num_vertex + (round*BLOCKED_SQUARE_SIZE+in_block_j) + id];
+        from_same_row[in_block_i][in_block_j+id] = d_dist[(glb_b_i_same_row*BLOCKING_FACTOR+in_block_i)*padded_num_vertex + (glb_b_j_same_row*BLOCKING_FACTOR + in_block_j) + id];
+        from_same_col[in_block_i][in_block_j+id] = d_dist[(glb_b_i_same_col*BLOCKING_FACTOR+in_block_i)*padded_num_vertex+(glb_b_j_same_col*BLOCKING_FACTOR+in_block_j) + id];
+        to[in_block_i][in_block_j+id]   = d_dist[(round*BLOCKING_FACTOR+in_block_i)* padded_num_vertex + (round*BLOCKING_FACTOR+in_block_j) + id];
     }
     __syncthreads();
-    for(int k=0;k<BLOCKED_SQUARE_SIZE;k++){
+    for(int k=0;k<BLOCKING_FACTOR;k++){
         #pragma unroll 4
         for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
             from_same_row[in_block_i][in_block_j+id] = min(
@@ -131,8 +132,8 @@ __global__ void phase_2_fuse(int* d_dist, int padded_num_vertex, int round){
         __syncthreads();
     }
     for(int id=0;id < THREAD_LOAD_SAVE_NUM;id++){
-        d_dist[(glb_b_i_same_row*BLOCKED_SQUARE_SIZE + in_block_i) * padded_num_vertex + (glb_b_j_same_row*BLOCKED_SQUARE_SIZE+in_block_j) + id] = from_same_row[in_block_i][in_block_j+id];
-        d_dist[(glb_b_i_same_col*BLOCKED_SQUARE_SIZE + in_block_i) * padded_num_vertex + (glb_b_j_same_col*BLOCKED_SQUARE_SIZE+in_block_j) + id] = from_same_col[in_block_i][in_block_j+id];
+        d_dist[(glb_b_i_same_row*BLOCKING_FACTOR + in_block_i) * padded_num_vertex + (glb_b_j_same_row*BLOCKING_FACTOR+in_block_j) + id] = from_same_row[in_block_i][in_block_j+id];
+        d_dist[(glb_b_i_same_col*BLOCKING_FACTOR + in_block_i) * padded_num_vertex + (glb_b_j_same_col*BLOCKING_FACTOR+in_block_j) + id] = from_same_col[in_block_i][in_block_j+id];
     }
 }
 
@@ -145,17 +146,17 @@ __global__ void phase_2_same_row(int* d_dist, int padded_num_vertex, int round){
     int in_block_j = threadIdx.x * THREAD_LOAD_SAVE_NUM;
 
     // load data
-    extern __shared__ int from[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
-    extern __shared__ int to[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
+    extern __shared__ int from[BLOCKING_FACTOR][BLOCKING_FACTOR];
+    extern __shared__ int to[BLOCKING_FACTOR][BLOCKING_FACTOR];
     #pragma unroll 4
     for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
-        from[in_block_i][in_block_j+id] = d_dist[(glb_block_i*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (glb_block_j*BLOCKED_SQUARE_SIZE + in_block_j) + id];
-        to[in_block_i][in_block_j+id]   = d_dist[(round*BLOCKED_SQUARE_SIZE+in_block_i)* padded_num_vertex + (round*BLOCKED_SQUARE_SIZE+in_block_j) + id];
+        from[in_block_i][in_block_j+id] = d_dist[(glb_block_i*BLOCKING_FACTOR+in_block_i)*padded_num_vertex + (glb_block_j*BLOCKING_FACTOR + in_block_j) + id];
+        to[in_block_i][in_block_j+id]   = d_dist[(round*BLOCKING_FACTOR+in_block_i)* padded_num_vertex + (round*BLOCKING_FACTOR+in_block_j) + id];
     }
     __syncthreads();
 
     // cal
-    for(int k=0;k<BLOCKED_SQUARE_SIZE;k++){
+    for(int k=0;k<BLOCKING_FACTOR;k++){
         #pragma unroll 4
         for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
             from[in_block_i][in_block_j+id] = min(
@@ -167,7 +168,7 @@ __global__ void phase_2_same_row(int* d_dist, int padded_num_vertex, int round){
     }
     #pragma unroll 4
     for(int id=0;id < THREAD_LOAD_SAVE_NUM;id++){
-        d_dist[(glb_block_i*BLOCKED_SQUARE_SIZE + in_block_i) * padded_num_vertex + (glb_block_j*BLOCKED_SQUARE_SIZE+in_block_j) + id] = from[in_block_i][in_block_j+id];
+        d_dist[(glb_block_i*BLOCKING_FACTOR + in_block_i) * padded_num_vertex + (glb_block_j*BLOCKING_FACTOR+in_block_j) + id] = from[in_block_i][in_block_j+id];
     }
 }
 __global__ void phase_2_same_col(int* d_dist, int padded_num_vertex, int round){
@@ -177,16 +178,16 @@ __global__ void phase_2_same_col(int* d_dist, int padded_num_vertex, int round){
     int in_block_i = threadIdx.y;
     int in_block_j = threadIdx.x * THREAD_LOAD_SAVE_NUM;
     // load data
-    extern __shared__ int from[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
-    extern __shared__ int to[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
+    extern __shared__ int from[BLOCKING_FACTOR][BLOCKING_FACTOR];
+    extern __shared__ int to[BLOCKING_FACTOR][BLOCKING_FACTOR];
     #pragma unroll 4
     for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
-        from[in_block_i][in_block_j+id]   = d_dist[(glb_block_i*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex+(glb_block_j*BLOCKED_SQUARE_SIZE+in_block_j) + id];
-        to[in_block_i][in_block_j+id] = d_dist[(round*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (round*BLOCKED_SQUARE_SIZE+in_block_j)+ id];
+        from[in_block_i][in_block_j+id]   = d_dist[(glb_block_i*BLOCKING_FACTOR+in_block_i)*padded_num_vertex+(glb_block_j*BLOCKING_FACTOR+in_block_j) + id];
+        to[in_block_i][in_block_j+id] = d_dist[(round*BLOCKING_FACTOR+in_block_i)*padded_num_vertex + (round*BLOCKING_FACTOR+in_block_j)+ id];
     }
     __syncthreads();
     
-    for(int k=0;k<BLOCKED_SQUARE_SIZE;k++){
+    for(int k=0;k<BLOCKING_FACTOR;k++){
         #pragma unroll 4
         for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
             from[in_block_i][in_block_j+id] = min(
@@ -198,23 +199,23 @@ __global__ void phase_2_same_col(int* d_dist, int padded_num_vertex, int round){
     }
     #pragma unroll 4
     for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
-        d_dist[(glb_block_i*BLOCKED_SQUARE_SIZE + in_block_i) * padded_num_vertex + (glb_block_j*BLOCKED_SQUARE_SIZE+in_block_j) + id] = from[in_block_i][in_block_j+id];
+        d_dist[(glb_block_i*BLOCKING_FACTOR + in_block_i) * padded_num_vertex + (glb_block_j*BLOCKING_FACTOR+in_block_j) + id] = from[in_block_i][in_block_j+id];
     }
 }
 
-__global__ void phase_3(int* d_dist, int padded_num_vertex, int round){
-    if(round == blockIdx.x || round == blockIdx.y) return;
+__global__ void phase_3(int* d_dist, int padded_num_vertex, int round, int offset){
+    if(round == blockIdx.x || round == (blockIdx.y+offset/BLOCKING_FACTOR)) return;
     int glb_block_i = blockIdx.y;
     int glb_block_j = blockIdx.x;
     int in_block_i = threadIdx.y;
     int in_block_j = threadIdx.x * THREAD_LOAD_SAVE_NUM;
     int arr[THREAD_LOAD_SAVE_NUM];
-    extern __shared__ int from[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
-    extern __shared__ int to[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
+    extern __shared__ int from[BLOCKING_FACTOR][BLOCKING_FACTOR];
+    extern __shared__ int to[BLOCKING_FACTOR][BLOCKING_FACTOR];
     // precalculate address
-    int src_addr = (glb_block_i*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (glb_block_j*BLOCKED_SQUARE_SIZE+in_block_j);
-    int from_addr = (round*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex+(glb_block_j*BLOCKED_SQUARE_SIZE + in_block_j);
-    int to_addr = (glb_block_i*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex+(round*BLOCKED_SQUARE_SIZE + in_block_j);
+    int src_addr = (glb_block_i*BLOCKING_FACTOR+in_block_i+offset)*padded_num_vertex + (glb_block_j*BLOCKING_FACTOR+in_block_j);//
+    int from_addr = (round*BLOCKING_FACTOR+in_block_i)*padded_num_vertex+(glb_block_j*BLOCKING_FACTOR + in_block_j);
+    int to_addr = (glb_block_i*BLOCKING_FACTOR+in_block_i+offset)*padded_num_vertex+(round*BLOCKING_FACTOR + in_block_j);//
 
     // load value
     #pragma unroll
@@ -226,7 +227,7 @@ __global__ void phase_3(int* d_dist, int padded_num_vertex, int round){
         to[in_block_i][in_block_j+id] = d_dist[to_addr + id];
     }
     __syncthreads();
-    for(int k=0;k<BLOCKED_SQUARE_SIZE;k++){
+    for(int k=0;k<BLOCKING_FACTOR;k++){
         #pragma unroll
         for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
             arr[id] = min(
@@ -247,12 +248,12 @@ __global__ void phase_3_a(int *d_dist, int padded_num_vertex, int round, int blo
     int in_block_i = threadIdx.y;
     int in_block_j = threadIdx.x * THREAD_LOAD_SAVE_NUM;
     int arr[THREAD_LOAD_SAVE_NUM];
-    extern __shared__ int from[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
-    extern __shared__ int to[BLOCKED_SQUARE_SIZE][BLOCKED_SQUARE_SIZE];
+    extern __shared__ int from[BLOCKING_FACTOR][BLOCKING_FACTOR];
+    extern __shared__ int to[BLOCKING_FACTOR][BLOCKING_FACTOR];
     // precalculate address
-    int src_addr = (glb_block_i*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex + (glb_block_j*BLOCKED_SQUARE_SIZE+in_block_j);
-    int from_addr = (round*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex+(glb_block_j*BLOCKED_SQUARE_SIZE + in_block_j);
-    int to_addr = (glb_block_i*BLOCKED_SQUARE_SIZE+in_block_i)*padded_num_vertex+(round*BLOCKED_SQUARE_SIZE + in_block_j);
+    int src_addr = (glb_block_i*BLOCKING_FACTOR+in_block_i)*padded_num_vertex + (glb_block_j*BLOCKING_FACTOR+in_block_j);
+    int from_addr = (round*BLOCKING_FACTOR+in_block_i)*padded_num_vertex+(glb_block_j*BLOCKING_FACTOR + in_block_j);
+    int to_addr = (glb_block_i*BLOCKING_FACTOR+in_block_i)*padded_num_vertex+(round*BLOCKING_FACTOR + in_block_j);
 
     // load value
     #pragma unroll
@@ -264,7 +265,7 @@ __global__ void phase_3_a(int *d_dist, int padded_num_vertex, int round, int blo
         to[in_block_i][in_block_j+id] = d_dist[to_addr + id];
     }
     __syncthreads();
-    for(int k=0;k<BLOCKED_SQUARE_SIZE;k++){
+    for(int k=0;k<BLOCKING_FACTOR;k++){
         #pragma unroll
         for(int id=0;id<THREAD_LOAD_SAVE_NUM;id++){
             arr[id] = min(
@@ -280,67 +281,45 @@ __global__ void phase_3_a(int *d_dist, int padded_num_vertex, int round, int blo
 
 // [remote] pp23s80	—	41	249.29		0.32	0.17	0.17	0.17	0.17	0.17	0.17	0.17	0.22	0.22	0.22	0.17	0.17	0.17	0.22	0.32	0.32	0.47	0.47	0.97	1.17	1.77	2.32	2.92	3.62	4.53	5.33	6.18	7.18	7.98	9.18	10.54	11.94	13.62	16.35	17.50	18.96	22.61	23.87	27.43	28.92
 void blocked_floyd_warshell(){
-    // ouput #gpu
-    int num_gpu;
-    cudaGetDeviceCount(&num_gpu);
-    cout << "num_gpu: " << num_gpu << endl;
-    // partition the matrix into blocks
-    // each block is BLOCKED_SQUARE_SIZE * BLOCKED_SQUARE_SIZE
-    // each block is stored in row-major order
-    // each block is stored in dist[i * padded_num_vertex + j], where i and j are the top-left corner of the block
-
-    // num_blocked_square_row is guaranteed to be an integer, for padded_num_vertex = COALESCED_FACTOR * k, which is a multiple of BLOCKED_SQUARE_SIZE
-    num_blocked_square_row = padded_num_vertex / BLOCKED_SQUARE_SIZE;
-    num_blocked_square_col = padded_num_vertex / BLOCKED_SQUARE_SIZE;
-    dim3 basic_block(THREAD_X_DIM, THREAD_Y_DIM);
-    dim3 phase_1_grid(1);
-    dim3 phase_2_grid(num_blocked_square_row);
-    dim3 phase_3_grid(num_blocked_square_row, num_blocked_square_row);
-    dim3 phase_3_upper_grid(num_blocked_square_col, num_blocked_square_row/2);
-    dim3 phase_3_lower_grid(num_blocked_square_col, num_blocked_square_row - num_blocked_square_row/2);
-    
+    int num_gpus;
+    cudaGetDeviceCount(&num_gpus);
+    omp_set_num_threads(num_gpus);
+    cudaHostRegister(dist, padded_num_vertex * padded_num_vertex * sizeof(int), cudaHostRegisterDefault);
     // allocate memory for dist in device
-    int* d_dist_0, *d_dist_1;
-    cudaSetDevice(0);
-    cudaMalloc(&d_dist_0, padded_num_vertex * padded_num_vertex * sizeof(int));
-    cudaMemcpy(d_dist_0, dist, padded_num_vertex * padded_num_vertex * sizeof(int), cudaMemcpyHostToDevice);
+    int* d_dist[2];
+    int y_offset = ((padded_num_vertex/BLOCKING_FACTOR) % 2 == 0)? padded_num_vertex/2: (padded_num_vertex/BLOCKING_FACTOR/2+1)*BLOCKING_FACTOR;
 
-    cudaDeviceEnablePeerAccess(1, 0);
+    #pragma omp parallel
+    {
+        num_blocked_square_row = padded_num_vertex / BLOCKING_FACTOR;
+        num_blocked_square_col = padded_num_vertex / BLOCKING_FACTOR;
+        dim3 basic_block(THREAD_X_DIM, THREAD_Y_DIM);
+        dim3 phase_1_grid(1);
+        dim3 phase_2_grid(num_blocked_square_row);
+        dim3 phase_3_grid(num_blocked_square_row, y_offset/BLOCKING_FACTOR);
+        
+        unsigned int tid = omp_get_thread_num();
+        cudaSetDevice(tid);
+        cudaMalloc(&d_dist[tid], padded_num_vertex * padded_num_vertex * sizeof(int));
+        cudaMemcpy(d_dist[tid], dist, padded_num_vertex * padded_num_vertex * sizeof(int), cudaMemcpyHostToDevice);
 
-    cudaSetDevice(1);
-    cudaMalloc(&d_dist_1, padded_num_vertex * padded_num_vertex * sizeof(int));
-    
-    for(int round = 0; round< num_blocked_square_row; round++){
-        cudaSetDevice(0);
-        // three phases:
-        // phase 1: dependent block, should be thread sync at the level of k
-        phase_1 <<< phase_1_grid, basic_block>>> (d_dist_0, padded_num_vertex, round);
-        // // phase 2: dependent block, should be thread sync at the level of k 
-        //phase_2_same_row <<< phase_2_grid, basic_block>>> (d_dist, padded_num_vertex, round);
-        //phase_2_same_col <<< phase_2_grid, basic_block>>> (d_dist, padded_num_vertex, round);
-        phase_2_fuse <<< phase_2_grid, basic_block>>> (d_dist_0, padded_num_vertex, round);
-        // // phase 3: independent block, any place is ok
-        //phase_3 <<< phase_3_grid, basic_block>>> (d_dist, padded_num_vertex, round);
-        cudaDeviceSynchronize();
-        
-        cudaSetDevice(0);
-        phase_3_a <<< phase_3_upper_grid, basic_block>>> (d_dist_0, padded_num_vertex, round, 0);
-        phase_3_a <<< phase_3_lower_grid, basic_block>>> (d_dist_0, padded_num_vertex, round, num_blocked_square_row/2);
-        
-        cudaSetDevice(1);
-        cudaMemcpyPeer(d_dist_1, 1, d_dist_0, 0, padded_num_vertex * padded_num_vertex * sizeof(int));
-        phase_3_a <<< phase_3_upper_grid, basic_block>>> (d_dist_1, padded_num_vertex, round, 0);
-        phase_3_a <<< phase_3_lower_grid, basic_block>>> (d_dist_1, padded_num_vertex, round, num_blocked_square_row/2);
-        
-        cudaDeviceSynchronize();
-        cudaSetDevice(0);
-        cudaMemcpyPeer(d_dist_0, 0, d_dist_1, 1, num_blocked_square_row/2 * padded_num_vertex * sizeof(int));
+        for(int round=0;round<num_blocked_square_row;round++){
+            phase_1      <<< phase_1_grid, basic_block>>> (d_dist[tid], padded_num_vertex, round);
+            phase_2_fuse <<< phase_2_grid, basic_block>>> (d_dist[tid], padded_num_vertex, round);
+            phase_3      <<< phase_3_grid, basic_block>>> (d_dist[tid], padded_num_vertex, round, y_offset*tid);
+            cudaDeviceSynchronize();
+            #pragma omp barrier
+            if(tid==1 && (round+1) < y_offset/BLOCKING_FACTOR){
+                cudaMemcpy(d_dist[1] + (round+1)*BLOCKING_FACTOR*padded_num_vertex, d_dist[0] + (round+1)*BLOCKING_FACTOR*padded_num_vertex, BLOCKING_FACTOR*padded_num_vertex*sizeof(int), cudaMemcpyDeviceToDevice);
+            }else if(tid==0 && (round+1)>=y_offset/BLOCKING_FACTOR){
+                cudaMemcpy(d_dist[0] + (round+1)*BLOCKING_FACTOR*padded_num_vertex, d_dist[1] + (round+1)*BLOCKING_FACTOR*padded_num_vertex, BLOCKING_FACTOR*padded_num_vertex*sizeof(int), cudaMemcpyDeviceToDevice);
+            }
+        }
+        if(tid==0)
+            cudaMemcpy(dist, d_dist[tid], y_offset*padded_num_vertex*sizeof(int), cudaMemcpyDeviceToHost);
+        else
+            cudaMemcpy(dist + y_offset*padded_num_vertex, d_dist[tid] + y_offset*padded_num_vertex, (padded_num_vertex-y_offset)*padded_num_vertex*sizeof(int), cudaMemcpyDeviceToHost);
     }
-    // copy dist from device to host
-    cudaMemcpy(dist, d_dist_0, padded_num_vertex * padded_num_vertex * sizeof(int), cudaMemcpyDeviceToHost);
-    // cudaMemcpy(dist, d_dist_1, padded_num_vertex * padded_num_vertex * sizeof(int), cudaMemcpyDeviceToHost);
-    // free memory
-    cudaFree(d_dist_0);
 }
 
 int main(int argc, char* argv[]){

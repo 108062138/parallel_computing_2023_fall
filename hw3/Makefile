@@ -2,7 +2,7 @@ CC = mpicc
 CXX = g++
 CXXFLAGS = -std=c++17 -O3 -lm -fopenmp
 CFLAGS = -O3
-NVCCFLAGS = -O3 -std=c++11 -Xptxas=-v -arch=sm_61 -use_fast_math
+NVCCFLAGS = -O3 -std=c++11 -Xptxas=-v -arch=sm_61 -use_fast_math -Xcompiler -fopenmp
 NVCC = nvcc
 LDFLAGS = -lz
 
