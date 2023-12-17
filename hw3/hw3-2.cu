@@ -6,7 +6,6 @@
 #include <iomanip>  // for std::setw
 #include <cstdio>   // for fread
 
-
 #define NOT_REACHABLE         (1073741823)
 #define BASIC_WARP            (32)
 #define COALESCED_FACTOR      (BASIC_WARP*4)
@@ -147,7 +146,6 @@ __global__ void phase_3(int* d_dist, int padded_num_vertex, int round){
     extern __shared__ int from[BLOCKING_FACTOR][BLOCKING_FACTOR];
     // precalculate address
     int src_addr = (glb_block_i*BLOCKING_FACTOR+in_block_i)*padded_num_vertex + (glb_block_j*BLOCKING_FACTOR+in_block_j);
-
     int to_addr = (round*BLOCKING_FACTOR+in_block_i)*padded_num_vertex+(glb_block_j*BLOCKING_FACTOR + in_block_j);
     int from_addr = (glb_block_i*BLOCKING_FACTOR+in_block_i)*padded_num_vertex+(round*BLOCKING_FACTOR + in_block_j);
 

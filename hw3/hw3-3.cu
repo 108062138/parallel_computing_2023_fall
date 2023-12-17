@@ -6,7 +6,7 @@
 #include <iomanip>  // for std::setw
 #include <cstdio>   // for fread
 #include <omp.h>
-
+#include <chrono>
 
 #define NOT_REACHABLE         (1073741823)
 #define BASIC_WARP            (32)
@@ -325,6 +325,7 @@ void blocked_floyd_warshell(){
 int main(int argc, char* argv[]){
     assert(argc == 3);
     maxWidth = 5;
+    auto start = chrono::steady_clock::now();
     char* input_file = argv[1];
     char* output_file = argv[2];
     // parse input file
@@ -333,5 +334,7 @@ int main(int argc, char* argv[]){
     blocked_floyd_warshell();
     // output file
     output(output_file);
+    auto end = chrono::steady_clock::now();
+    cout << "Time: " << chrono::duration_cast<chrono::milliseconds>(end - start).count()/1000. << endl;
     return 0;
 }

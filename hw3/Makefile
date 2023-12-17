@@ -6,7 +6,7 @@ NVCCFLAGS = -O3 -std=c++11 -Xptxas=-v -arch=sm_61 -use_fast_math -Xcompiler -fop
 NVCC = nvcc
 LDFLAGS = -lz
 
-TARGETS = hw3-2 hw3-3
+TARGETS = hw3-2 hw3-3 #hw3-2-prof
 SOURCES = hw3-1.cc
 
 .PHONY: all
