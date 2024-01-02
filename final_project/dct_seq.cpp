@@ -247,7 +247,7 @@ std::pair<std::vector<std::vector<double>>, std::vector<double>> uniform_quantiz
     return {map_on_ladder, ladder};
 }
 
-void uniform_dequantization(std::vector<std::vector<double>>& block, int n, int m, std::vector<double>& ladder, int channel, double res[8][8]) {
+void uniform_dequantization(std::vector<std::vector<double>>& block, int n, std::vector<double>& ladder, int channel, double res[8][8]) {
     for (int i = 0; i < n; ++i) {
         for (int j = 0; j < n; ++j) {
             block[i][j] = ladder[static_cast<int>(block[i][j])];
@@ -316,7 +316,17 @@ void generate_dct_matrix() {
     }
 }
 
-double*** dct_compression(double*** image){
+void zero_out(double block[8][8], int n){
+    for(int i=0;i<n;i++){
+        for(int j=0;j<n;j++){
+            if(i >= 4 || j >= 4){
+                block[i][j] = 0;
+            }
+        }
+    }
+}
+
+double*** dct_compression(double*** image, int n, int m){
     double*** res = allocate_3d_double_array(height, width, 3);
     // copy the image data
     for(unsigned int i=0;i<height;i++){
@@ -326,7 +336,7 @@ double*** dct_compression(double*** image){
             }
         }
     }
-    //center_data(res, FORWARD);
+    center_data(res, FORWARD);
     // cut the image into 8x8 blocks
     for(unsigned int i=0;i<height;i+=8){
         for(unsigned int j=0;j<width;j+=8){
@@ -341,8 +351,6 @@ double*** dct_compression(double*** image){
                         temp[ii][jj] = res[i+ii][j+jj][c];
                     }
                 }
-                // center tmp
-                center_tmp(temp, FORWARD);
                 // apply dct and store the result in temp_dct
                 for(int ii=0;ii<8;ii++){
                     for(int jj=0;jj<8;jj++){
@@ -365,19 +373,11 @@ double*** dct_compression(double*** image){
 
 
                 // apply quantization
-                auto pr = uniform_quantization(temp_dct, 4, 2, c);
-                auto map_on_ladder = pr.first;
-                auto ladder = pr.second;
+                auto [map_on_ladder, ladder] = uniform_quantization(temp_dct, n, m, c);
                 // apply dequantization
-                uniform_dequantization(map_on_ladder, 4, 2, ladder, c, temp_idct);
+                uniform_dequantization(map_on_ladder, n, ladder, c, temp_idct);
                 // zero element not in nxn block
-                for(int ii=0;ii<8;ii++){
-                    for(int jj=0;jj<8;jj++){
-                        if(ii >= 4 || jj >= 4){
-                            temp_idct[ii][jj] = 0;
-                        }
-                    }
-                }
+                zero_out(temp_idct, n);
                 
                 // apply idct and store the result in temp_idct
                 for(int ii=0;ii<8;ii++){
@@ -398,8 +398,6 @@ double*** dct_compression(double*** image){
                         temp_dct[ii][jj] = sum;
                     }
                 }
-                // decenter tmp
-                center_tmp(temp_idct, BACKWARD);
                 // copy the data back to res
                 for(int ii=0;ii<8;ii++){
                     for(int jj=0;jj<8;jj++){
@@ -409,7 +407,7 @@ double*** dct_compression(double*** image){
             }
         }
     }
-    //center_data(res, BACKWARD);
+    center_data(res, BACKWARD);
     return res;
 }
 
@@ -425,13 +423,14 @@ void display_dct_matrix(){
 
 int main() {
     bool show_dct_matrix = false;
+    int n=4, m=2;
     // Read the image data into a 3D array
     unsigned char*** image = read_jpg();
     // Process the image data here
     double*** image_YCBCR = RGB2YCBCR(image);
     generate_dct_matrix();
     if(show_dct_matrix) display_dct_matrix();
-    double*** image_dct = dct_compression(image_YCBCR);
+    double*** image_dct = dct_compression(image_YCBCR, n, m);
     unsigned char*** image_RGB_orig = YCBCR2RGB(image_YCBCR);
     unsigned char*** image_RGB_dct = YCBCR2RGB(image_dct);
 
