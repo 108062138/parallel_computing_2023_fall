@@ -4,6 +4,11 @@
 #include <stdlib.h>
 #include <cmath>
 #include <iostream>
+#include <vector>
+#include <algorithm>
+#include <cmath>
+#include <climits>
+
 #define FORWARD true
 #define BACKWARD false
 using namespace std;
@@ -41,7 +46,7 @@ double CHROMINANCE_TABLE[8][8] = {
     {99, 99, 99, 99, 99, 99, 99, 99}
 };
 
-int width, height, components;
+unsigned int width, height, components;
 
 // Write a PNG file from a 3D array of RGB values
 void write_png(const char* filename, unsigned char*** image, int width, int height) {
@@ -198,21 +203,82 @@ unsigned char *** YCBCR2RGB(double ***image_YCBCR){
     return image;
 }
 
+
+std::pair<std::vector<std::vector<double>>, std::vector<double>> uniform_quantization(double block[8][8], int n, int m, int channel) {
+    std::vector<std::vector<double>> res(n, std::vector<double>(n, 0));
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            if (channel == 0) {
+                res[i][j] = block[i][j] / LUMINANCE_TABLE[i][j];
+            } else {
+                res[i][j] = block[i][j] / CHROMINANCE_TABLE[i][j];
+            }
+        }
+    }
+    double big = -100000000;
+    double small = 100000000;
+    // collect big and small
+    for(int i=0;i<n;i++){
+        for(int j=0;j<n;j++){
+            if(res[i][j] > big){
+                big = res[i][j];
+            }
+            if(res[i][j] < small){
+                small = res[i][j];
+            }
+        }
+    }
+    double total_interval = big - small;
+    int step = std::pow(2, m);
+    double interval_unit = total_interval / step;
+    std::vector<double> ladder(step, 0);
+    for (int i = 0; i < step; ++i) {
+        ladder[i] = small + i * interval_unit;
+    }
+    auto min_element_it = std::min_element(ladder.begin(), ladder.end(), [](double a, double b) { return std::abs(a) < std::abs(b); });
+    *min_element_it = 0;
+    std::vector<std::vector<double>> map_on_ladder(n, std::vector<double>(n, 0));
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            auto min_element_it = std::min_element(ladder.begin(), ladder.end(), [res, i, j](double a, double b) { return std::abs(res[i][j] - a) < std::abs(res[i][j] - b); });
+            map_on_ladder[i][j] = std::distance(ladder.begin(), min_element_it);
+        }
+    }
+    return {map_on_ladder, ladder};
+}
+
+void uniform_dequantization(std::vector<std::vector<double>>& block, int n, int m, std::vector<double>& ladder, int channel, double res[8][8]) {
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            block[i][j] = ladder[static_cast<int>(block[i][j])];
+        }
+    }
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            if (channel == 0) {
+                res[i][j] = std::round(block[i][j] * LUMINANCE_TABLE[i][j]);
+            } else {
+                res[i][j] = std::round(block[i][j] * CHROMINANCE_TABLE[i][j]);
+            }
+        }
+    }
+}
+
 void center_data(double*** image, bool direction){
     if(direction){
         // center the data
-        for(int i=0;i<height;i++){
-            for(int j=0;j<width;j++){
-                for(int c=0;c<components;c++){
+        for(unsigned  i=0;i<height;i++){
+            for(unsigned j=0;j<width;j++){
+                for(unsigned int c=0;c<components;c++){
                     image[i][j][c] -= 128;
                 }
             }
         }
     }else{
         // decenter the data
-        for(int i=0;i<height;i++){
-            for(int j=0;j<width;j++){
-                for(int c=0;c<components;c++){
+        for(unsigned int i=0;i<height;i++){
+            for(unsigned int j=0;j<width;j++){
+                for(unsigned int c=0;c<components;c++){
                     image[i][j][c] += 128;
                 }
             }
@@ -253,18 +319,18 @@ void generate_dct_matrix() {
 double*** dct_compression(double*** image){
     double*** res = allocate_3d_double_array(height, width, 3);
     // copy the image data
-    for(int i=0;i<height;i++){
-        for(int j=0;j<width;j++){
-            for(int c=0;c<components;c++){
+    for(unsigned int i=0;i<height;i++){
+        for(unsigned int j=0;j<width;j++){
+            for(unsigned int c=0;c<components;c++){
                 res[i][j][c] = image[i][j][c];
             }
         }
     }
     //center_data(res, FORWARD);
     // cut the image into 8x8 blocks
-    for(int i=0;i<height;i+=8){
-        for(int j=0;j<width;j+=8){
-            for(int c=0;c<components;c++){
+    for(unsigned int i=0;i<height;i+=8){
+        for(unsigned int j=0;j<width;j+=8){
+            for(unsigned int c=0;c<components;c++){
                 // apply dct
                 double temp[8][8];
                 double temp_dct[8][8];
@@ -287,6 +353,32 @@ double*** dct_compression(double*** image){
                         temp_dct[ii][jj] = sum;
                     }
                 }
+                for(int ii=0;ii<8;ii++){
+                    for(int jj=0;jj<8;jj++){
+                        double sum = 0;
+                        for(int k=0;k<8;k++){
+                            sum += temp_dct[ii][k] * DCT_MATRIX[jj][k];
+                        }
+                        temp_idct[ii][jj] = sum;
+                    }
+                }
+
+
+                // apply quantization
+                auto pr = uniform_quantization(temp_dct, 4, 2, c);
+                auto map_on_ladder = pr.first;
+                auto ladder = pr.second;
+                // apply dequantization
+                uniform_dequantization(map_on_ladder, 4, 2, ladder, c, temp_idct);
+                // zero element not in nxn block
+                for(int ii=0;ii<8;ii++){
+                    for(int jj=0;jj<8;jj++){
+                        if(ii >= 4 || jj >= 4){
+                            temp_idct[ii][jj] = 0;
+                        }
+                    }
+                }
+                
                 // apply idct and store the result in temp_idct
                 for(int ii=0;ii<8;ii++){
                     for(int jj=0;jj<8;jj++){
@@ -295,6 +387,15 @@ double*** dct_compression(double*** image){
                             sum += DCT_MATRIX[k][ii] * temp_dct[k][jj];
                         }
                         temp_idct[ii][jj] = sum;
+                    }
+                }
+                for(int ii=0;ii<8;ii++){
+                    for(int jj=0;jj<8;jj++){
+                        double sum = 0;
+                        for(int k=0;k<8;k++){
+                            sum += temp_idct[ii][k] * DCT_MATRIX[jj][k];
+                        }
+                        temp_dct[ii][jj] = sum;
                     }
                 }
                 // decenter tmp
@@ -312,20 +413,24 @@ double*** dct_compression(double*** image){
     return res;
 }
 
+void display_dct_matrix(){
+    cout << "DCT Matrix: " << endl;
+    for(int i=0;i<8;i++){
+        for(int j=0;j<8;j++){
+            cout << DCT_MATRIX[i][j] << " ";
+        }
+        cout << endl;
+    }
+}
+
 int main() {
+    bool show_dct_matrix = false;
     // Read the image data into a 3D array
     unsigned char*** image = read_jpg();
     // Process the image data here
     double*** image_YCBCR = RGB2YCBCR(image);
     generate_dct_matrix();
-    // // display the dct matrix
-    // cout << "DCT Matrix: " << endl;
-    // for(int i=0;i<8;i++){
-    //     for(int j=0;j<8;j++){
-    //         cout << DCT_MATRIX[i][j] << " ";
-    //     }
-    //     cout << endl;
-    // }
+    if(show_dct_matrix) display_dct_matrix();
     double*** image_dct = dct_compression(image_YCBCR);
     unsigned char*** image_RGB_orig = YCBCR2RGB(image_YCBCR);
     unsigned char*** image_RGB_dct = YCBCR2RGB(image_dct);
