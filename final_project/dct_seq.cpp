@@ -89,15 +89,15 @@ void write_png(const char* filename, unsigned char*** image, int width, int heig
         fclose(fp);
 }
 
-unsigned char*** read_jpg(){
+unsigned char*** read_jpg(char* file_name){
     struct jpeg_decompress_struct cinfo;
     struct jpeg_error_mgr jerr;
     FILE *infile;
     JSAMPARRAY buffer;
     int row_stride;
 
-    if ((infile = fopen("./src/Barbara.jpg", "rb")) == NULL) {
-        fprintf(stderr, "can't open %s\n", "./src/Barbara.jpg");
+    if ((infile = fopen(file_name, "rb")) == NULL) {
+        fprintf(stderr, "can't open %s\n", file_name);
         return 0;
     }
 
@@ -406,9 +406,14 @@ double*** dct_compression(double*** image){
     return res;
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+    // read the command line arguments
+    for(int i=0;i<argc;i++)
+        cout << argv[i] << endl;
+    char *src_image = argv[1], *from_image = argv[2], *to_image = argv[3];
+
     // Read the image data into a 3D array
-    unsigned char*** image = read_jpg();
+    unsigned char*** image = read_jpg(src_image);
     // Process the image data here
     double*** image_YCBCR = RGB2YCBCR(image);
     double*** image_dct = dct_compression(image_YCBCR);
@@ -416,8 +421,8 @@ int main() {
     unsigned char*** image_RGB_dct = YCBCR2RGB(image_dct);
 
     // Write the image data to a PNG file
-    write_png("./out/dct_seq_Barbara_orig.png", image_RGB_orig, width, height);
-    write_png("./out/dct_seq_Barbara_dct.png", image_RGB_dct, width, height);
+    write_png(from_image, image_RGB_orig, width, height);
+    write_png(to_image, image_RGB_dct, width, height);
     // Free all 3D arrays here
     for (unsigned int y = 0; y < height; y++) {
         for (unsigned int x = 0; x < width; x++) {
