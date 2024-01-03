@@ -11,10 +11,12 @@
 
 #define FORWARD true
 #define BACKWARD false
+#define MOVE_DATA_FROM_IMAGE_TO_TMP true
+#define MOVE_DATA_FROM_TMP_TO_IMAGE false
+
 using namespace std;
 
-double DCT_MATRIX[8][8];
-double DCT_MATRIX_T[8][8];
+double DCT_MATRIX[8][8], DCT_MATRIX_T[8][8];
 
 double LUMINANCE_TABLE[8][8] = {
     {16, 11, 10, 16, 24, 40, 51, 61},
@@ -340,7 +342,7 @@ void matrix_mul(double A[8][8], double B[8][8], double C[8][8]){
 }
 
 void move_data(double tmp[8][8], double*** image, int i, int j, int c, bool direction){
-    if(direction==FORWARD){
+    if(direction==MOVE_DATA_FROM_IMAGE_TO_TMP){
         for(int ii=0;ii<8;ii++){
             for(int jj=0;jj<8;jj++){
                 tmp[ii][jj] = image[i+ii][j+jj][c];
@@ -355,20 +357,23 @@ void move_data(double tmp[8][8], double*** image, int i, int j, int c, bool dire
     }
 }
 
+void copy_image(double*** image, double*** image_copy){
+    for(unsigned int i=0;i<height;i++){
+        for(unsigned int j=0;j<width;j++){
+            for(unsigned int c=0;c<components;c++){
+                image_copy[i][j][c] = image[i][j][c];
+            }
+        }
+    }
+}
+
 double*** dct_compression(double*** image){
-    int m=4, n=2;
+    int m=4, n=2; // m: quantization level, n: store subblock size
     bool show_dct_matrix = false;
     // generate dct matrix
     generate_dct_matrix(show_dct_matrix);
     double*** res = allocate_3d_double_array(height, width, 3);
-    // copy the image data
-    for(unsigned int i=0;i<height;i++){
-        for(unsigned int j=0;j<width;j++){
-            for(unsigned int c=0;c<components;c++){
-                res[i][j][c] = image[i][j][c];
-            }
-        }
-    }
+    copy_image(image, res);
     // cut the image into 8x8 blocks
     for(unsigned int i=0;i<height;i+=8){
         for(unsigned int j=0;j<width;j+=8){
@@ -378,7 +383,7 @@ double*** dct_compression(double*** image){
                 double temp_dct_1[8][8], temp_dct_2[8][8];
                 double temp_idct_1[8][8], temp_idct_2[8][8];
                 // copy the data into temp
-                move_data(temp, res, i, j, c, FORWARD);
+                move_data(temp, res, i, j, c, MOVE_DATA_FROM_IMAGE_TO_TMP);
                 // center tmp
                 center_tmp(temp, FORWARD);
                 // apply dct
@@ -399,7 +404,7 @@ double*** dct_compression(double*** image){
                 // decenter tmp
                 center_tmp(temp_idct_2, BACKWARD);
                 // copy the data back to res
-                move_data(temp_idct_2, res, i, j, c, BACKWARD);
+                move_data(temp_idct_2, res, i, j, c, MOVE_DATA_FROM_TMP_TO_IMAGE);
             }
         }
     }
