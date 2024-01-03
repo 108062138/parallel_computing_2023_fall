@@ -296,7 +296,17 @@ void center_tmp(double tmp[8][8], bool direction){
     }
 }
 
-void generate_dct_matrix() {
+void display_dct_matrix(){
+    cout << "DCT Matrix: " << endl;
+    for(int i=0;i<8;i++){
+        for(int j=0;j<8;j++){
+            cout << DCT_MATRIX[i][j] << " ";
+        }
+        cout << endl;
+    }
+}
+
+void generate_dct_matrix(bool show_dct_matrix) {
     for (int i = 0; i < 8; ++i) {
         for (int j = 0; j < 8; ++j) {
             if (i == 0) {
@@ -312,10 +322,12 @@ void generate_dct_matrix() {
             DCT_MATRIX_T[i][j] = DCT_MATRIX[j][i];
         }
     }
+    if (show_dct_matrix)
+        display_dct_matrix();
 }
 
 void matrix_mul(double A[8][8], double B[8][8], double C[8][8]){
-    // c is output
+    // a@b=c, c is output
     for(int i=0;i<8;i++){
         for(int j=0;j<8;j++){
             double sum = 0;
@@ -345,6 +357,9 @@ void move_data(double tmp[8][8], double*** image, int i, int j, int c, bool dire
 
 double*** dct_compression(double*** image){
     int m=4, n=2;
+    bool show_dct_matrix = false;
+    // generate dct matrix
+    generate_dct_matrix(show_dct_matrix);
     double*** res = allocate_3d_double_array(height, width, 3);
     // copy the image data
     for(unsigned int i=0;i<height;i++){
@@ -354,7 +369,6 @@ double*** dct_compression(double*** image){
             }
         }
     }
-    //center_data(res, FORWARD);
     // cut the image into 8x8 blocks
     for(unsigned int i=0;i<height;i+=8){
         for(unsigned int j=0;j<width;j+=8){
@@ -389,28 +403,14 @@ double*** dct_compression(double*** image){
             }
         }
     }
-    //center_data(res, BACKWARD);
     return res;
 }
 
-void display_dct_matrix(){
-    cout << "DCT Matrix: " << endl;
-    for(int i=0;i<8;i++){
-        for(int j=0;j<8;j++){
-            cout << DCT_MATRIX[i][j] << " ";
-        }
-        cout << endl;
-    }
-}
-
 int main() {
-    bool show_dct_matrix = false;
     // Read the image data into a 3D array
     unsigned char*** image = read_jpg();
     // Process the image data here
     double*** image_YCBCR = RGB2YCBCR(image);
-    generate_dct_matrix();
-    if(show_dct_matrix) display_dct_matrix();
     double*** image_dct = dct_compression(image_YCBCR);
     unsigned char*** image_RGB_orig = YCBCR2RGB(image_YCBCR);
     unsigned char*** image_RGB_dct = YCBCR2RGB(image_dct);
