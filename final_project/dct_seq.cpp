@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <climits>
+#include <omp.h>
 
 #define FORWARD true
 #define BACKWARD false
@@ -417,9 +418,12 @@ int main(int argc, char* argv[]) {
         cout << argv[i] << endl;
     char *src_image = argv[1], *from_image = argv[2], *to_image = argv[3];
 
+    double start_time, end_time;
+    start_time = omp_get_wtime();
+
     // Read the image data into a 3D array
     unsigned char*** image = read_jpg(src_image);
-    // Process the image data here
+    // Process the image data here: convert to YCbCr, DCT, quantize, inverse DCT, YCbCr to RGB
     double*** image_YCBCR = RGB2YCBCR(image);
     double*** image_dct = dct_compression(image_YCBCR);
     unsigned char*** image_RGB_orig = YCBCR2RGB(image_YCBCR);
@@ -444,6 +448,9 @@ int main(int argc, char* argv[]) {
         delete[] image_RGB_dct[y];
     }
     delete[] image;
+
+    end_time = omp_get_wtime();
+    cout << "In omp, time: " << end_time - start_time << endl;
 
     return 0;
 }

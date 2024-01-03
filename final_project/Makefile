@@ -25,9 +25,18 @@ $(TARGET_SEQ): $(OBJ_SEQ)
 # How to link the OpenMP program
 $(TARGET_OMP): $(OBJ_OMP)
 	$(CXX) $(CXXFLAGS) $(OMPFLAGS) -o $@ $^ $(LDFLAGS)
+$(TARGET_SEQ): $(OBJ_SEQ)
+	$(CXX) $(CXXFLAGS) $(OMPFLAGS) -o $@ $^ $(LDFLAGS)
 
 # This is a rule for generating the .o files from .cpp files
 %.o: %.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# Special rule for OpenMP .o files to include the OpenMP flags
+$(OBJ_OMP): $(SRC_OMP)
+	$(CXX) $(CXXFLAGS) $(OMPFLAGS) -c $< -o $@
+# Special rule for OpenMP .o files to include the OpenMP flags
+$(OBJ_SEQ): $(SRC_SEQ)
 	$(CXX) $(CXXFLAGS) $(OMPFLAGS) -c $< -o $@
 
 # Clean target for cleaning up
