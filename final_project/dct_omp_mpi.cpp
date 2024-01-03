@@ -201,19 +201,14 @@ unsigned char *** YCBCR2RGB(double ***image_YCBCR){
             image[y][x] = new unsigned char[3];
         }
     }
-    // cout << "height: " << height << " ,width: " << width << " ,components: " << components << endl;
-    cout <<" here "<< endl;
     // apply sub sampling
     for (unsigned int y = 0; y < height; y++) {
         for (unsigned int x = 0; x < width; x++) {
-            // cout << "y: " << y << " ,x: " << x << endl;
             image[y][x][0] = image_YCBCR[y][x][0] + 1.402 * (image_YCBCR[y][x][2] - 128);
             image[y][x][1] = image_YCBCR[y][x][0] - 0.344136 * (image_YCBCR[y][x][1] - 128) - 0.714136 * (image_YCBCR[y][x][2] - 128);
             image[y][x][2] = image_YCBCR[y][x][0] + 1.772 * (image_YCBCR[y][x][1] - 128);
         }
     }
-
-    cout <<"zzzzz"<< endl;    
 
     return image;
 }
@@ -388,7 +383,7 @@ void copy_image(double*** image, double*** image_copy){
     }
 }
 
-double*** dct_compression(double*** image, int rank, int from_i, int to_i){
+double*** dct_compression(double*** image, unsigned int from_i, unsigned int to_i){
     int m=8, n=5; // m: quantization level, n: store subblock size
     bool show_dct_matrix = false;
     // generate dct matrix
@@ -397,8 +392,6 @@ double*** dct_compression(double*** image, int rank, int from_i, int to_i){
     copy_image(image, res);
     // cut the image into 8x8 blocks
     center_data(res, FORWARD);
-    // cout << "rank: " << rank << " ,job_per_process: " << job_per_process << ", height: " << height << endl;
-    // cout << "[from row, to row):  [" << from_i << ", "<< to_i <<")"<< endl;
     // apply dct
     for(unsigned int i=from_i;i<to_i;i+=8){
         for(unsigned int j=0;j<width;j+=8){
@@ -465,40 +458,26 @@ int main(int argc, char* argv[]) {
     if(rank==0){
         // Process the image data here: convert to YCbCr, DCT, quantize, inverse DCT, YCbCr to RGB
         double*** image_YCBCR = RGB2YCBCR(image);
-
-        int from_i, to_i;
-        from_i = rank*job_per_process*BLOCK_EDGE;
-        to_i = ((rank+1)*job_per_process*BLOCK_EDGE > height) ? height : (rank+1)*job_per_process*BLOCK_EDGE;
-        cout << "rank: " << rank << " from_i = " << from_i << " to_i = " << to_i << endl;
-        double*** image_dct = dct_compression(image_YCBCR, rank, from_i, to_i);
-        // collect the data from other processes
-        double *image_rcv[size];
-        int from[size], to[size];
+        unsigned int from[size], to[size];
         for(int i=0;i<size;i++){
             from[i] = i*job_per_process*BLOCK_EDGE;
             to[i] = ((i+1)*job_per_process*BLOCK_EDGE > height) ? height : (i+1)*job_per_process*BLOCK_EDGE;
         }
+        double*** image_dct = dct_compression(image_YCBCR, from[0], to[0]);
+        // collect the data from other processes
+        double *image_rcv[size];
         for(int i=0;i<size;i++)
             image_rcv[i] = new double[height*width*3];
         for(int i=1;i<size;i++){
             MPI_Recv(image_rcv[i], height*width*3, MPI_DOUBLE, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            for(int j=from[i];j<to[i];j++){
-                for(int k=0;k<width;k++){
-                    for(int c=0;c<components;c++){
+            for(unsigned int j=from[i];j<to[i];j++){
+                for(unsigned int k=0;k<width;k++){
+                    for(unsigned int c=0;c<components;c++){
                         image_dct[j][k][c] = image_rcv[i][j*width*3+k*3+c];
                     }
                 }
             }
         }
-        // for(int i=1;i<size;i++){
-        //     for(int j=from[i];j<to[i];j++){
-        //         for(int k=0;k<width;k++){
-        //             for(int c=0;c<components;c++){
-        //                 image_dct[j][k][c] = image_rcv[i][j*width*3+k*3+c];
-        //             }
-        //         }
-        //     }
-        // }
         unsigned char*** image_RGB_orig = YCBCR2RGB(image_YCBCR);
         unsigned char*** image_RGB_dct = YCBCR2RGB(image_dct);
         // Write the image data to a PNG file
@@ -528,18 +507,18 @@ int main(int argc, char* argv[]) {
         // Process the image data here: convert to YCbCr, DCT, quantize, inverse DCT, YCbCr to RGB
         double*** image_YCBCR = RGB2YCBCR(image);
 
-        int from_i, to_i;
+        unsigned int from_i, to_i;
         from_i = rank*job_per_process*BLOCK_EDGE;
         to_i = ((rank+1)*job_per_process*BLOCK_EDGE > height) ? height : (rank+1)*job_per_process*BLOCK_EDGE;
-        double*** image_dct = dct_compression(image_YCBCR, rank, from_i, to_i);
+        double*** image_dct = dct_compression(image_YCBCR, from_i, to_i);
         // send the data to process 0
         // create a 1d array to store the data, which is 3*width*height
         double* image_dct_1d = new double[height*width*3];
         // copy the data from 3d array to 1d array
         int current_has = 0;
-        for(int i=0;i<height;i++){
-            for(int j=0;j<width;j++){
-                for(int c=0;c<components;c++){
+        for(unsigned int i=0;i<height;i++){
+            for(unsigned int j=0;j<width;j++){
+                for(unsigned int c=0;c<components;c++){
                     if(i>=from_i && i<to_i)
                         image_dct_1d[current_has] = image_dct[i][j][c];
                     else
