@@ -485,8 +485,11 @@ int main(int argc, char* argv[]) {
         for(int i=0;i<height;i++){
             for(int j=0;j<width;j++){
                 for(int c=0;c<components;c++){
+                    if(i>height/2)
+                        image_dct[i][j][c] = image_dct_tmp_1d_1[current_has];
+                    else
+                        image_dct[i][j][c] = image_dct_tmp_1d_2[current_has];
                     image_YCBCR[i][j][c] = image_dct_tmp_1d_1[current_has];
-                    image_dct[i][j][c] = image_dct_tmp_1d_2[current_has];
                     current_has++;
                 }
             }
