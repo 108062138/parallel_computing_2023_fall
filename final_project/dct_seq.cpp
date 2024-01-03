@@ -368,7 +368,7 @@ void copy_image(double*** image, double*** image_copy){
 }
 
 double*** dct_compression(double*** image){
-    int m=4, n=2; // m: quantization level, n: store subblock size
+    int m=7, n=5; // m: quantization level, n: store subblock size
     bool show_dct_matrix = false;
     // generate dct matrix
     generate_dct_matrix(show_dct_matrix);
