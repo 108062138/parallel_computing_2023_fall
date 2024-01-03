@@ -13,16 +13,8 @@
 #define BACKWARD false
 using namespace std;
 
-double DCT_MATRIX[8][8] = {
-    {0.3535534, 0.3535534, 0.3535534, 0.3535534, 0.3535534, 0.3535534, 0.3535534, 0.3535534},
-    {0.4903926, 0.4157348, 0.2777851, 0.0975452, -0.0975452, -0.2777851, -0.4157348, -0.4903926},
-    {0.4619398, 0.1913417, -0.1913417, -0.4619398, -0.4619398, -0.1913417, 0.1913417, 0.4619398},
-    {0.4157348, -0.0975452, -0.4903926, -0.2777851, 0.2777851, 0.4903926, 0.0975452, -0.4157348},
-    {0.3535534, -0.3535534, -0.3535534, 0.3535534, 0.3535534, -0.3535534, -0.3535534, 0.3535534},
-    {0.2777851, -0.4903926, 0.0975452, 0.4157348, -0.4157348, -0.0975452, 0.4903926, -0.2777851},
-    {0.1913417, -0.4619398, 0.4619398, -0.1913417, -0.1913417, 0.4619398, -0.4619398, 0.1913417},
-    {0.0975452, -0.2777851, 0.4157348, -0.4903926, 0.4903926, -0.4157348, 0.2777851, -0.0975452}
-};
+double DCT_MATRIX[8][8];
+double DCT_MATRIX_T[8][8];
 
 double LUMINANCE_TABLE[8][8] = {
     {16, 11, 10, 16, 24, 40, 51, 61},
@@ -314,19 +306,29 @@ void generate_dct_matrix() {
             }
         }
     }
-}
-
-void zero_out(double block[8][8], int n){
-    for(int i=0;i<n;i++){
-        for(int j=0;j<n;j++){
-            if(i >= 4 || j >= 4){
-                block[i][j] = 0;
-            }
+    // transpose
+    for(int i=0;i<8;i++){
+        for(int j=0;j<8;j++){
+            DCT_MATRIX_T[i][j] = DCT_MATRIX[j][i];
         }
     }
 }
 
-double*** dct_compression(double*** image, int n, int m){
+void matrix_mul(double A[8][8], double B[8][8], double C[8][8]){
+    // c is output
+    for(int i=0;i<8;i++){
+        for(int j=0;j<8;j++){
+            double sum = 0;
+            for(int k=0;k<8;k++){
+                sum += A[i][k] * B[k][j];
+            }
+            C[i][j] = sum;
+        }
+    }
+}
+
+double*** dct_compression(double*** image){
+    int m=4, n=2;
     double*** res = allocate_3d_double_array(height, width, 3);
     // copy the image data
     for(unsigned int i=0;i<height;i++){
@@ -336,78 +338,65 @@ double*** dct_compression(double*** image, int n, int m){
             }
         }
     }
-    center_data(res, FORWARD);
+    //center_data(res, FORWARD);
     // cut the image into 8x8 blocks
     for(unsigned int i=0;i<height;i+=8){
         for(unsigned int j=0;j<width;j+=8){
             for(unsigned int c=0;c<components;c++){
                 // apply dct
                 double temp[8][8];
-                double temp_dct[8][8];
-                double temp_idct[8][8];
+                double temp_dct_1[8][8], temp_dct_2[8][8];
+                double temp_idct_1[8][8], temp_idct_2[8][8];
                 // copy the data into temp
                 for(int ii=0;ii<8;ii++){
                     for(int jj=0;jj<8;jj++){
                         temp[ii][jj] = res[i+ii][j+jj][c];
                     }
                 }
-                // apply dct and store the result in temp_dct
-                for(int ii=0;ii<8;ii++){
-                    for(int jj=0;jj<8;jj++){
-                        double sum = 0;
-                        for(int k=0;k<8;k++){
-                            sum += DCT_MATRIX[ii][k] * temp[k][jj];
-                        }
-                        temp_dct[ii][jj] = sum;
-                    }
-                }
-                for(int ii=0;ii<8;ii++){
-                    for(int jj=0;jj<8;jj++){
-                        double sum = 0;
-                        for(int k=0;k<8;k++){
-                            sum += temp_dct[ii][k] * DCT_MATRIX[jj][k];
-                        }
-                        temp_idct[ii][jj] = sum;
-                    }
-                }
-
+                // center tmp
+                center_tmp(temp, FORWARD);
+                // apply dct
+                matrix_mul(DCT_MATRIX, temp, temp_dct_1);
+                matrix_mul(temp_dct_1, DCT_MATRIX_T, temp_dct_2);
 
                 // apply quantization
-                auto [map_on_ladder, ladder] = uniform_quantization(temp_dct, n, m, c);
+                auto pr = uniform_quantization(temp_dct_2, m, n, c);
+                auto map_on_ladder = pr.first;
+                auto ladder = pr.second;
                 // apply dequantization
-                uniform_dequantization(map_on_ladder, n, ladder, c, temp_idct);
-                // zero element not in nxn block
-                zero_out(temp_idct, n);
+                uniform_dequantization(map_on_ladder, n, ladder, c, temp_dct_2);
+
+                // apply idct
+                matrix_mul(DCT_MATRIX_T, temp_dct_2, temp_idct_1);
+                matrix_mul(temp_idct_1, DCT_MATRIX, temp_idct_2);
+
+                // // apply quantization
+                // auto pr = uniform_quantization(temp_dct_1, m, n, c);
+                // auto map_on_ladder = pr.first;
+                // auto ladder = pr.second;
+                // // apply dequantization
+                // uniform_dequantization(map_on_ladder, n, ladder, c, temp_idct_1);
+                // // zero element not in nxn block
+                // for(int ii=0;ii<8;ii++){
+                //     for(int jj=0;jj<8;jj++){
+                //         if(ii >= 4 || jj >= 4){
+                //             temp_idct_1[ii][jj] = 0;
+                //         }
+                //     }
+                // }
                 
-                // apply idct and store the result in temp_idct
-                for(int ii=0;ii<8;ii++){
-                    for(int jj=0;jj<8;jj++){
-                        double sum = 0;
-                        for(int k=0;k<8;k++){
-                            sum += DCT_MATRIX[k][ii] * temp_dct[k][jj];
-                        }
-                        temp_idct[ii][jj] = sum;
-                    }
-                }
-                for(int ii=0;ii<8;ii++){
-                    for(int jj=0;jj<8;jj++){
-                        double sum = 0;
-                        for(int k=0;k<8;k++){
-                            sum += temp_idct[ii][k] * DCT_MATRIX[jj][k];
-                        }
-                        temp_dct[ii][jj] = sum;
-                    }
-                }
+                // decenter tmp
+                center_tmp(temp_idct_2, BACKWARD);
                 // copy the data back to res
                 for(int ii=0;ii<8;ii++){
                     for(int jj=0;jj<8;jj++){
-                        res[i+ii][j+jj][c] = temp_idct[ii][jj];
+                        res[i+ii][j+jj][c] = temp_idct_2[ii][jj];
                     }
                 }
             }
         }
     }
-    center_data(res, BACKWARD);
+    //center_data(res, BACKWARD);
     return res;
 }
 
@@ -423,14 +412,13 @@ void display_dct_matrix(){
 
 int main() {
     bool show_dct_matrix = false;
-    int n=4, m=2;
     // Read the image data into a 3D array
     unsigned char*** image = read_jpg();
     // Process the image data here
     double*** image_YCBCR = RGB2YCBCR(image);
     generate_dct_matrix();
     if(show_dct_matrix) display_dct_matrix();
-    double*** image_dct = dct_compression(image_YCBCR, n, m);
+    double*** image_dct = dct_compression(image_YCBCR);
     unsigned char*** image_RGB_orig = YCBCR2RGB(image_YCBCR);
     unsigned char*** image_RGB_dct = YCBCR2RGB(image_dct);
 
