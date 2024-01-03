@@ -392,8 +392,10 @@ double*** dct_compression(double*** image){
     copy_image(image, res);
     // cut the image into 8x8 blocks
     center_data(res, FORWARD);
+    
     for(unsigned int i=0;i<height;i+=8){
         for(unsigned int j=0;j<width;j+=8){
+            //#pragma omp parallel for schedule(dynamic)
             for(unsigned int c=0;c<components;c++){
                 // apply dct
                 double temp[8][8];
