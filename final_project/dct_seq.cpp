@@ -327,6 +327,22 @@ void matrix_mul(double A[8][8], double B[8][8], double C[8][8]){
     }
 }
 
+void move_data(double tmp[8][8], double*** image, int i, int j, int c, bool direction){
+    if(direction==FORWARD){
+        for(int ii=0;ii<8;ii++){
+            for(int jj=0;jj<8;jj++){
+                tmp[ii][jj] = image[i+ii][j+jj][c];
+            }
+        }
+    }else{
+        for(int ii=0;ii<8;ii++){
+            for(int jj=0;jj<8;jj++){
+                image[i+ii][j+jj][c] = tmp[ii][jj];
+            }
+        }
+    }
+}
+
 double*** dct_compression(double*** image){
     int m=4, n=2;
     double*** res = allocate_3d_double_array(height, width, 3);
@@ -348,11 +364,7 @@ double*** dct_compression(double*** image){
                 double temp_dct_1[8][8], temp_dct_2[8][8];
                 double temp_idct_1[8][8], temp_idct_2[8][8];
                 // copy the data into temp
-                for(int ii=0;ii<8;ii++){
-                    for(int jj=0;jj<8;jj++){
-                        temp[ii][jj] = res[i+ii][j+jj][c];
-                    }
-                }
+                move_data(temp, res, i, j, c, FORWARD);
                 // center tmp
                 center_tmp(temp, FORWARD);
                 // apply dct
@@ -369,30 +381,11 @@ double*** dct_compression(double*** image){
                 // apply idct
                 matrix_mul(DCT_MATRIX_T, temp_dct_2, temp_idct_1);
                 matrix_mul(temp_idct_1, DCT_MATRIX, temp_idct_2);
-
-                // // apply quantization
-                // auto pr = uniform_quantization(temp_dct_1, m, n, c);
-                // auto map_on_ladder = pr.first;
-                // auto ladder = pr.second;
-                // // apply dequantization
-                // uniform_dequantization(map_on_ladder, n, ladder, c, temp_idct_1);
-                // // zero element not in nxn block
-                // for(int ii=0;ii<8;ii++){
-                //     for(int jj=0;jj<8;jj++){
-                //         if(ii >= 4 || jj >= 4){
-                //             temp_idct_1[ii][jj] = 0;
-                //         }
-                //     }
-                // }
                 
                 // decenter tmp
                 center_tmp(temp_idct_2, BACKWARD);
                 // copy the data back to res
-                for(int ii=0;ii<8;ii++){
-                    for(int jj=0;jj<8;jj++){
-                        res[i+ii][j+jj][c] = temp_idct_2[ii][jj];
-                    }
-                }
+                move_data(temp_idct_2, res, i, j, c, BACKWARD);
             }
         }
     }
