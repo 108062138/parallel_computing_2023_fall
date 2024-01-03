@@ -115,12 +115,36 @@ unsigned char*** read_jpg(char* file_name){
     buffer = (*cinfo.mem->alloc_sarray)
         ((j_common_ptr)&cinfo, JPOOL_IMAGE, row_stride, 1);
 
+    cout << "Image data: " << endl;
+    cout << "height: " << cinfo.output_height << endl;
+    cout << "width: " << cinfo.output_width << endl;
+    cout << "components: " << cinfo.output_components << endl;
+
+    width = cinfo.output_width;
+    height = cinfo.output_height;
+    components = cinfo.output_components;
+    // padding the image to be multiple of 8
+    if(width%8!=0){
+        width = width + 8 - width%8;
+    }
+    if(height%8!=0){
+        height = height + 8 - height%8;
+    }
     // Allocate memory for the 3D array
-    unsigned char*** image = new unsigned char**[cinfo.output_height];
-    for (unsigned int y = 0; y < cinfo.output_height; y++) {
-        image[y] = new unsigned char*[cinfo.output_width];
-        for (unsigned int x = 0; x < cinfo.output_width; x++) {
+    unsigned char*** image = new unsigned char**[height];
+    for (unsigned int y = 0; y < height; y++) {
+        image[y] = new unsigned char*[width];
+        for (unsigned int x = 0; x < width; x++) {
             image[y][x] = new unsigned char[3];
+        }
+    }
+
+    // init the image to be all 0
+    for(unsigned int i=0;i<height;i++){
+        for(unsigned int j=0;j<width;j++){
+            for(unsigned int c=0;c<components;c++){
+                image[i][j][c] = 0;
+            }
         }
     }
 
@@ -138,15 +162,6 @@ unsigned char*** read_jpg(char* file_name){
     jpeg_finish_decompress(&cinfo);
     jpeg_destroy_decompress(&cinfo);
     fclose(infile);
-
-    cout << "Image data: " << endl;
-    cout << "height: " << cinfo.output_height << endl;
-    cout << "width: " << cinfo.output_width << endl;
-    cout << "components: " << cinfo.output_components << endl;
-
-    width = cinfo.output_width;
-    height = cinfo.output_height;
-    components = cinfo.output_components;
 
     return image;
 }
@@ -369,13 +384,14 @@ void copy_image(double*** image, double*** image_copy){
 }
 
 double*** dct_compression(double*** image){
-    int m=7, n=5; // m: quantization level, n: store subblock size
+    int m=8, n=5; // m: quantization level, n: store subblock size
     bool show_dct_matrix = false;
     // generate dct matrix
     generate_dct_matrix(show_dct_matrix);
     double*** res = allocate_3d_double_array(height, width, 3);
     copy_image(image, res);
     // cut the image into 8x8 blocks
+    center_data(res, FORWARD);
     for(unsigned int i=0;i<height;i+=8){
         for(unsigned int j=0;j<width;j+=8){
             for(unsigned int c=0;c<components;c++){
@@ -386,7 +402,7 @@ double*** dct_compression(double*** image){
                 // copy the data into temp
                 move_data(temp, res, i, j, c, MOVE_DATA_FROM_IMAGE_TO_TMP);
                 // center tmp
-                center_tmp(temp, FORWARD);
+                // center_tmp(temp, FORWARD);
                 // apply dct
                 matrix_mul(DCT_MATRIX, temp, temp_dct_1);
                 matrix_mul(temp_dct_1, DCT_MATRIX_T, temp_dct_2);
@@ -403,12 +419,13 @@ double*** dct_compression(double*** image){
                 matrix_mul(temp_idct_1, DCT_MATRIX, temp_idct_2);
                 
                 // decenter tmp
-                center_tmp(temp_idct_2, BACKWARD);
+                // center_tmp(temp_idct_2, BACKWARD);
                 // copy the data back to res
                 move_data(temp_idct_2, res, i, j, c, MOVE_DATA_FROM_TMP_TO_IMAGE);
             }
         }
     }
+    center_data(res, BACKWARD);
     return res;
 }
 
