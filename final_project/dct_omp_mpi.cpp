@@ -400,7 +400,7 @@ double*** dct_compression(double*** image, int rank, int from_i, int to_i){
     // cout << "rank: " << rank << " ,job_per_process: " << job_per_process << ", height: " << height << endl;
     // cout << "[from row, to row):  [" << from_i << ", "<< to_i <<")"<< endl;
     // apply dct
-    for(unsigned int i=0;i<height;i+=8){
+    for(unsigned int i=from_i;i<to_i;i+=8){
         for(unsigned int j=0;j<width;j+=8){
             #pragma omp parallel for schedule(dynamic)
             for(unsigned int c=0;c<components;c++){
@@ -472,29 +472,33 @@ int main(int argc, char* argv[]) {
         cout << "rank: " << rank << " from_i = " << from_i << " to_i = " << to_i << endl;
         double*** image_dct = dct_compression(image_YCBCR, rank, from_i, to_i);
         // collect the data from other processes
-        double *image_dct_tmp_1d_1 = new double[height*width*3];
-        double *image_dct_tmp_1d_2 = new double[height*width*3];
-        for(int i=1;i<size;i++){
-            if(i == 1)
-                MPI_Recv(image_dct_tmp_1d_1, height*width*3, MPI_DOUBLE, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            else 
-                MPI_Recv(image_dct_tmp_1d_2, height*width*3, MPI_DOUBLE, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        double *image_rcv[size];
+        int from[size], to[size];
+        for(int i=0;i<size;i++){
+            from[i] = i*job_per_process*BLOCK_EDGE;
+            to[i] = ((i+1)*job_per_process*BLOCK_EDGE > height) ? height : (i+1)*job_per_process*BLOCK_EDGE;
         }
-        // merge two 1d array into one into image_dct
-        int current_has = 0;
-        for(int i=0;i<height;i++){
-            for(int j=0;j<width;j++){
-                for(int c=0;c<components;c++){
-                    if(i>height/2)
-                        image_dct[i][j][c] = image_dct_tmp_1d_1[current_has];
-                    else
-                        image_dct[i][j][c] = image_dct_tmp_1d_2[current_has];
-                    image_YCBCR[i][j][c] = image_dct_tmp_1d_1[current_has];
-                    current_has++;
+        for(int i=0;i<size;i++)
+            image_rcv[i] = new double[height*width*3];
+        for(int i=1;i<size;i++){
+            MPI_Recv(image_rcv[i], height*width*3, MPI_DOUBLE, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            for(int j=from[i];j<to[i];j++){
+                for(int k=0;k<width;k++){
+                    for(int c=0;c<components;c++){
+                        image_dct[j][k][c] = image_rcv[i][j*width*3+k*3+c];
+                    }
                 }
             }
         }
-        // cout << "wtf" << endl;
+        // for(int i=1;i<size;i++){
+        //     for(int j=from[i];j<to[i];j++){
+        //         for(int k=0;k<width;k++){
+        //             for(int c=0;c<components;c++){
+        //                 image_dct[j][k][c] = image_rcv[i][j*width*3+k*3+c];
+        //             }
+        //         }
+        //     }
+        // }
         unsigned char*** image_RGB_orig = YCBCR2RGB(image_YCBCR);
         unsigned char*** image_RGB_dct = YCBCR2RGB(image_dct);
         // Write the image data to a PNG file
@@ -519,7 +523,7 @@ int main(int argc, char* argv[]) {
         delete[] image;
 
         end_time = omp_get_wtime();
-        // cout << "In omp, time: " << end_time - start_time << endl;
+        cout << "In omp, time: " << end_time - start_time << endl;
     }else{
         // Process the image data here: convert to YCbCr, DCT, quantize, inverse DCT, YCbCr to RGB
         double*** image_YCBCR = RGB2YCBCR(image);
@@ -529,9 +533,6 @@ int main(int argc, char* argv[]) {
         to_i = ((rank+1)*job_per_process*BLOCK_EDGE > height) ? height : (rank+1)*job_per_process*BLOCK_EDGE;
         double*** image_dct = dct_compression(image_YCBCR, rank, from_i, to_i);
         // send the data to process 0
-        
-        cout << "rank: " << rank << " from_i = " << from_i << " to_i = " << to_i << endl;
-        // cout << "rank: " << rank << " ,start: " << from_i*width*3 << " ,end: " << (to_i-from_i)*width*3+from_i*width*3 << endl;
         // create a 1d array to store the data, which is 3*width*height
         double* image_dct_1d = new double[height*width*3];
         // copy the data from 3d array to 1d array
@@ -539,7 +540,10 @@ int main(int argc, char* argv[]) {
         for(int i=0;i<height;i++){
             for(int j=0;j<width;j++){
                 for(int c=0;c<components;c++){
-                    image_dct_1d[current_has] = image_dct[i][j][c];
+                    if(i>=from_i && i<to_i)
+                        image_dct_1d[current_has] = image_dct[i][j][c];
+                    else
+                        image_dct_1d[current_has] = 0;
                     current_has++;
                 }
             }
