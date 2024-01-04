@@ -23,6 +23,8 @@ using namespace std;
 
 __constant__ double d_DCT_MATRIX[8][8];
 __constant__ double d_DCT_MATRIX_T[8][8];
+__constant__ double d_LUMINANCE_TABLE[8][8];
+__constant__ double d_CHROMINANCE_TABLE[8][8];
 
 double DCT_MATRIX[8][8], DCT_MATRIX_T[8][8];
 
@@ -397,6 +399,7 @@ __global__ void dct_kernel(double* channel, int height, int width, int n, int m,
     extern __shared__ double temp_dct_2[BLOCK_Y_SIZE][BLOCK_X_SIZE];
     extern __shared__ double temp_idct_1[BLOCK_Y_SIZE][BLOCK_X_SIZE];
     extern __shared__ double temp_idct_2[BLOCK_Y_SIZE][BLOCK_X_SIZE];
+    extern __shared__ double ladder[1024];
 
     int i = blockIdx.y * blockDim.y + threadIdx.y;
     int j = blockIdx.x * blockDim.x + threadIdx.x;
@@ -414,10 +417,57 @@ __global__ void dct_kernel(double* channel, int height, int width, int n, int m,
         sum += temp_dct_1[threadIdx.y][k] * d_DCT_MATRIX_T[k][threadIdx.x];
     temp_dct_2[threadIdx.y][threadIdx.x] = sum;
     __syncthreads();
+    if(c==0)
+        temp_dct_2[threadIdx.y][threadIdx.x] = temp_dct_2[threadIdx.y][threadIdx.x] / d_LUMINANCE_TABLE[threadIdx.y][threadIdx.x];
+    else
+        temp_dct_2[threadIdx.y][threadIdx.x] = temp_dct_2[threadIdx.y][threadIdx.x] / d_CHROMINANCE_TABLE[threadIdx.y][threadIdx.x];
+    __syncthreads();
     // quantization
-
+    // first get the min and max among temp_dct_2
+    double big = -100000000;
+    double small = 100000000;
+    int step = 2 << m;
+    for(int ii=0;ii<8;ii++){
+        for(int jj=0;jj<8;jj++){
+            if(temp_dct_2[ii][jj] > big){
+                big = temp_dct_2[ii][jj];
+            }
+            if(temp_dct_2[ii][jj] < small){
+                small = temp_dct_2[ii][jj];
+            }
+        }
+    }
+    double total_interval = big - small;
+    double interval_unit = total_interval / step;
+    for(int ii=0;ii<step;ii++){
+        ladder[ii] = small + ii * interval_unit;
+    }
+    int closest_to_0_index = 0, closest_to_0 = 100000000;
+    for(int ii=0;ii<step;ii++){
+        if(std::abs(ladder[ii]) < closest_to_0){
+            closest_to_0 = std::abs(ladder[ii]);
+            closest_to_0_index = ii;
+        }
+    }
+    ladder[closest_to_0_index] = 0;
+    __syncthreads();
+    // iterate through the ladder to find the closest value over i, j
+    int closest_to_ij_index = 0, closest_to_ij = 100000000;
+    for(int lad=0;lad<step;lad++){
+        if(std::abs(temp_dct_2[threadIdx.y][threadIdx.x] - ladder[lad]) < std::abs(temp_dct_2[threadIdx.y][threadIdx.x] - ladder[closest_to_ij_index])){
+            closest_to_ij_index = lad;
+        }
+    }
+    temp_dct_2[threadIdx.y][threadIdx.x] = closest_to_ij_index;
     // dequantization
-
+    temp_dct_2[threadIdx.y][threadIdx.x] = ladder[(int)temp_dct_2[threadIdx.y][threadIdx.x]];
+// 
+    __syncthreads();
+    if(c==0)
+        temp_dct_2[threadIdx.y][threadIdx.x] = temp_dct_2[threadIdx.y][threadIdx.x] * d_LUMINANCE_TABLE[threadIdx.y][threadIdx.x];
+    else
+        temp_dct_2[threadIdx.y][threadIdx.x] = temp_dct_2[threadIdx.y][threadIdx.x] * d_CHROMINANCE_TABLE[threadIdx.y][threadIdx.x];
+    __syncthreads();
     // inverse DCT
     sum = 0;
     for(int k=0;k<8;k++)
@@ -456,6 +506,8 @@ double*** dct_compression(double*** image){
     // put DCT_MATRIX_T into constant memory and DCT_MATRIX_T into constant memory
     cudaMemcpyToSymbol(d_DCT_MATRIX, DCT_MATRIX, 8*8*sizeof(double));
     cudaMemcpyToSymbol(d_DCT_MATRIX_T, DCT_MATRIX_T, 8*8*sizeof(double));
+    cudaMemcpyToSymbol(d_LUMINANCE_TABLE, LUMINANCE_TABLE, 8*8*sizeof(double));
+    cudaMemcpyToSymbol(d_CHROMINANCE_TABLE, CHROMINANCE_TABLE, 8*8*sizeof(double));
     
     for(unsigned int c=0;c<components;c++){
         channels[c] = new double[height*width];
