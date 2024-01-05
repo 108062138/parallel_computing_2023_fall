@@ -501,7 +501,6 @@ double*** dct_compression(double*** image){
     // create three channels to store each channel's dct result
     double* channels[components];
     double* d_channels[components];
-
     for(unsigned int c=0;c<components;c++){
         channels[c] = new double[height*width];
         // copy the data into channels
@@ -510,14 +509,6 @@ double*** dct_compression(double*** image){
                 channels[c][i*width+j] = res[i][j][c];
             }
         }
-        cudaSetDevice(c%num_gpus);
-        cudaMalloc((void**)&d_channels[c], height*width*sizeof(double));
-        cudaMemcpy(d_channels[c], channels[c], height*width*sizeof(double), cudaMemcpyHostToDevice);
-        // put DCT_MATRIX_T into constant memory and DCT_MATRIX_T into constant memory
-        cudaMemcpyToSymbol(d_DCT_MATRIX, DCT_MATRIX, 8*8*sizeof(double));
-        cudaMemcpyToSymbol(d_DCT_MATRIX_T, DCT_MATRIX_T, 8*8*sizeof(double));
-        cudaMemcpyToSymbol(d_LUMINANCE_TABLE, LUMINANCE_TABLE, 8*8*sizeof(double));
-        cudaMemcpyToSymbol(d_CHROMINANCE_TABLE, CHROMINANCE_TABLE, 8*8*sizeof(double));
     }
 
     #pragma omp parallel
@@ -530,6 +521,15 @@ double*** dct_compression(double*** image){
 
         unsigned int gpu_id = omp_get_thread_num();
         cudaSetDevice(gpu_id);
+
+        cudaMalloc((void**)&d_channels[gpu_id], height*width*sizeof(double));
+        cudaMemcpy(d_channels[gpu_id], channels[gpu_id], height*width*sizeof(double), cudaMemcpyHostToDevice);
+        // put DCT_MATRIX_T into constant memory and DCT_MATRIX_T into constant memory
+        cudaMemcpyToSymbol(d_DCT_MATRIX, DCT_MATRIX, 8*8*sizeof(double));
+        cudaMemcpyToSymbol(d_DCT_MATRIX_T, DCT_MATRIX_T, 8*8*sizeof(double));
+        cudaMemcpyToSymbol(d_LUMINANCE_TABLE, LUMINANCE_TABLE, 8*8*sizeof(double));
+        cudaMemcpyToSymbol(d_CHROMINANCE_TABLE, CHROMINANCE_TABLE, 8*8*sizeof(double));
+
         #pragma omp barrier
         if(gpu_id==0){
             dct_kernel<<<grid, block>>>(d_channels[gpu_id], height, width, n, m, gpu_id);
